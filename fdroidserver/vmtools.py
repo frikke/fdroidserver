@@ -33,7 +33,7 @@ import threading
 lock = threading.Lock()
 
 
-def get_clean_builder(serverdir, reset=False):
+def get_clean_builder(serverdir):
     if not os.path.isdir(serverdir):
         if os.path.islink(serverdir):
             os.unlink(serverdir)
@@ -41,36 +41,23 @@ def get_clean_builder(serverdir, reset=False):
         os.makedirs(serverdir)
     vagrantfile = os.path.join(serverdir, 'Vagrantfile')
     if not os.path.isfile(vagrantfile):
-        with open(os.path.join('builder', 'Vagrantfile'), 'w') as f:
-            f.write(textwrap.dedent("""\
+        with open(vagrantfile, 'w') as f:
+            f.write(
+                textwrap.dedent(
+                    """\
                 # generated file, do not change.
 
                 Vagrant.configure("2") do |config|
                     config.vm.box = "buildserver"
                     config.vm.synced_folder ".", "/vagrant", disabled: true
                 end
-                """))
+                """
+                )
+            )
     vm = get_build_vm(serverdir)
-    if reset:
-        logging.info('resetting buildserver by request')
-    elif not vm.vagrant_uuid_okay():
-        logging.info('resetting buildserver, because vagrant vm is not okay.')
-        reset = True
-    elif not vm.snapshot_exists('fdroidclean'):
-        logging.info("resetting buildserver, because snapshot 'fdroidclean' is not present.")
-        reset = True
-
-    if reset:
-        vm.destroy()
-    vm.up()
-    vm.suspend()
-
-    if reset:
-        logging.info('buildserver recreated: taking a clean snapshot')
-        vm.snapshot_create('fdroidclean')
-    else:
-        logging.info('builserver ok: reverting to clean snapshot')
-        vm.snapshot_revert('fdroidclean')
+    logging.info('destroying buildserver before build')
+    vm.destroy()
+    logging.info('starting buildserver')
     vm.up()
 
     try:
@@ -96,15 +83,24 @@ def _check_output(cmd, cwd=None):
 
 
 def get_build_vm(srvdir, provider=None):
-    """Factory function for getting FDroidBuildVm instances.
+    """No summary.
+
+    Factory function for getting FDroidBuildVm instances.
 
     This function tries to figure out what hypervisor should be used
     and creates an object for controlling a build VM.
 
-    :param srvdir: path to a directory which contains a Vagrantfile
-    :param provider: optionally this parameter allows specifiying an
-        specific vagrant provider.
-    :returns: FDroidBuildVm instance.
+    Parameters
+    ----------
+    srvdir
+      path to a directory which contains a Vagrantfile
+    provider
+      optionally this parameter allows specifiying an
+      specific vagrant provider.
+
+    Returns
+    -------
+    FDroidBuildVm instance.
     """
     abssrvdir = abspath(srvdir)
 
@@ -127,25 +123,37 @@ def get_build_vm(srvdir, provider=None):
     if kvm_installed and vbox_installed:
         logging.debug('both kvm and vbox are installed.')
     elif kvm_installed:
-        logging.debug('libvirt is the sole installed and supported vagrant provider, selecting \'libvirt\'')
+        logging.debug(
+            'libvirt is the sole installed and supported vagrant provider, selecting \'libvirt\''
+        )
         return LibvirtBuildVm(abssrvdir)
     elif vbox_installed:
-        logging.debug('virtualbox is the sole installed and supported vagrant provider, selecting \'virtualbox\'')
+        logging.debug(
+            'virtualbox is the sole installed and supported vagrant provider, selecting \'virtualbox\''
+        )
         return VirtualboxBuildVm(abssrvdir)
     else:
-        logging.debug('could not confirm that either virtualbox or kvm/libvirt are installed')
+        logging.debug(
+            'could not confirm that either virtualbox or kvm/libvirt are installed'
+        )
 
     # try guessing provider from .../srvdir/.vagrant internals
-    vagrant_libvirt_path = os.path.join(abssrvdir, '.vagrant', 'machines',
-                                        'default', 'libvirt')
-    has_libvirt_machine = isdir(vagrant_libvirt_path) \
-        and len(os.listdir(vagrant_libvirt_path)) > 0
-    vagrant_virtualbox_path = os.path.join(abssrvdir, '.vagrant', 'machines',
-                                           'default', 'virtualbox')
-    has_vbox_machine = isdir(vagrant_virtualbox_path) \
-        and len(os.listdir(vagrant_virtualbox_path)) > 0
+    vagrant_libvirt_path = os.path.join(
+        abssrvdir, '.vagrant', 'machines', 'default', 'libvirt'
+    )
+    has_libvirt_machine = (
+        isdir(vagrant_libvirt_path) and len(os.listdir(vagrant_libvirt_path)) > 0
+    )
+    vagrant_virtualbox_path = os.path.join(
+        abssrvdir, '.vagrant', 'machines', 'default', 'virtualbox'
+    )
+    has_vbox_machine = (
+        isdir(vagrant_virtualbox_path) and len(os.listdir(vagrant_virtualbox_path)) > 0
+    )
     if has_libvirt_machine and has_vbox_machine:
-        logging.info('build vm provider lookup found virtualbox and libvirt, defaulting to \'virtualbox\'')
+        logging.info(
+            'build vm provider lookup found virtualbox and libvirt, defaulting to \'virtualbox\''
+        )
         return VirtualboxBuildVm(abssrvdir)
     elif has_libvirt_machine:
         logging.debug('build vm provider lookup found \'libvirt\'')
@@ -157,12 +165,15 @@ def get_build_vm(srvdir, provider=None):
     # try guessing provider from available buildserver boxes
     available_boxes = []
     import vagrant
+
     boxes = vagrant.Vagrant().box_list()
     for box in boxes:
         if box.name == "buildserver":
             available_boxes.append(box.provider)
     if "libvirt" in available_boxes and "virtualbox" in available_boxes:
-        logging.info('basebox lookup found virtualbox and libvirt boxes, defaulting to \'virtualbox\'')
+        logging.info(
+            'basebox lookup found virtualbox and libvirt boxes, defaulting to \'virtualbox\''
+        )
         return VirtualboxBuildVm(abssrvdir)
     elif "libvirt" in available_boxes:
         logging.info('\'libvirt\' buildserver box available, using that')
@@ -179,7 +190,7 @@ class FDroidBuildVmException(FDroidException):
     pass
 
 
-class FDroidBuildVm():
+class FDroidBuildVm:
     """Abstract base class for working with FDroids build-servers.
 
     Use the factory method `fdroidserver.vmtools.get_build_vm()` for
@@ -188,19 +199,26 @@ class FDroidBuildVm():
     This is intended to be a hypervisor independent, fault tolerant
     wrapper around the vagrant functions we use.
     """
+
     def __init__(self, srvdir):
-        """Create new server class.
-        """
+        """Create new server class."""
         self.srvdir = srvdir
         self.srvname = basename(srvdir) + '_default'
         self.vgrntfile = os.path.join(srvdir, 'Vagrantfile')
         self.srvuuid = self._vagrant_fetch_uuid()
         if not isdir(srvdir):
-            raise FDroidBuildVmException("Can not init vagrant, directory %s not present" % (srvdir))
+            raise FDroidBuildVmException(
+                "Can not init vagrant, directory %s not present" % (srvdir)
+            )
         if not isfile(self.vgrntfile):
-            raise FDroidBuildVmException("Can not init vagrant, '%s' not present" % (self.vgrntfile))
+            raise FDroidBuildVmException(
+                "Can not init vagrant, '%s' not present" % (self.vgrntfile)
+            )
         import vagrant
-        self.vgrnt = vagrant.Vagrant(root=srvdir, out_cm=vagrant.stdout_cm, err_cm=vagrant.stdout_cm)
+
+        self.vgrnt = vagrant.Vagrant(
+            root=srvdir, out_cm=vagrant.stdout_cm, err_cm=vagrant.stdout_cm
+        )
 
     def up(self, provision=True):
         global lock
@@ -269,7 +287,7 @@ class FDroidBuildVm():
         self.vgrnt.package(output=output)
 
     def vagrant_uuid_okay(self):
-        '''Having an uuid means that vagrant up has run successfully.'''
+        """Having an uuid means that vagrant up has run successfully."""
         if self.srvuuid is None:
             return False
         return True
@@ -299,13 +317,20 @@ class FDroidBuildVm():
     def box_add(self, boxname, boxfile, force=True):
         """Add vagrant box to vagrant.
 
-        :param boxname: name assigned to local deployment of box
-        :param boxfile: path to box file
-        :param force: overwrite existing box image (default: True)
+        Parameters
+        ----------
+        boxname
+          name assigned to local deployment of box
+        boxfile
+          path to box file
+        force
+          overwrite existing box image (default: True)
         """
         boxfile = abspath(boxfile)
         if not isfile(boxfile):
-            raise FDroidBuildVmException('supplied boxfile \'%s\' does not exist', boxfile)
+            raise FDroidBuildVmException(
+                'supplied boxfile \'%s\' does not exist', boxfile
+            )
         self.vgrnt.box_add(boxname, abspath(boxfile), force=force)
 
     def box_remove(self, boxname):
@@ -313,25 +338,28 @@ class FDroidBuildVm():
             _check_call(['vagrant', 'box', 'remove', '--all', '--force', boxname])
         except subprocess.CalledProcessError as e:
             logging.debug('tried removing box %s, but is did not exist: %s', boxname, e)
-        boxpath = os.path.join(expanduser('~'), '.vagrant',
-                               self._vagrant_file_name(boxname))
+        boxpath = os.path.join(
+            expanduser('~'), '.vagrant', self._vagrant_file_name(boxname)
+        )
         if isdir(boxpath):
-            logging.info("attempting to remove box '%s' by deleting: %s",
-                         boxname, boxpath)
+            logging.info(
+                "attempting to remove box '%s' by deleting: %s", boxname, boxpath
+            )
             shutil.rmtree(boxpath)
 
     def sshinfo(self):
-        """Get ssh connection info for a vagrant VM
+        """Get ssh connection info for a vagrant VM.
 
-        :returns: A dictionary containing 'hostname', 'port', 'user'
-            and 'idfile'
+        Returns
+        -------
+        A dictionary containing 'hostname', 'port', 'user' and 'idfile'
         """
         import paramiko
+
         try:
             sshconfig_path = os.path.join(self.srvdir, 'sshconfig')
             with open(sshconfig_path, 'wb') as fp:
-                fp.write(_check_output(['vagrant', 'ssh-config'],
-                                       cwd=self.srvdir))
+                fp.write(_check_output(['vagrant', 'ssh-config'], cwd=self.srvdir))
             vagranthost = 'default'  # Host in ssh config file
             sshconfig = paramiko.SSHConfig()
             with open(sshconfig_path, 'r') as f:
@@ -342,10 +370,12 @@ class FDroidBuildVm():
                 idfile = idfile[0]
             elif idfile.startswith('"') and idfile.endswith('"'):
                 idfile = idfile[1:-1]
-            return {'hostname': sshconfig['hostname'],
-                    'port': int(sshconfig['port']),
-                    'user': sshconfig['user'],
-                    'idfile': idfile}
+            return {
+                'hostname': sshconfig['hostname'],
+                'port': int(sshconfig['port']),
+                'user': sshconfig['user'],
+                'idfile': idfile,
+            }
         except subprocess.CalledProcessError as e:
             raise FDroidBuildVmException("Error getting ssh config") from e
 
@@ -413,21 +443,27 @@ class LibvirtBuildVm(FDroidBuildVm):
             # TODO use a libvirt storage pool to ensure the img file is readable
             if not os.access(imagepath, os.R_OK):
                 logging.warning(_('Cannot read "{path}"!').format(path=imagepath))
-                _check_call(['sudo', '/bin/chmod', '-R', 'a+rX', '/var/lib/libvirt/images'])
+                _check_call(
+                    ['sudo', '/bin/chmod', '-R', 'a+rX', '/var/lib/libvirt/images']
+                )
             shutil.copy2(imagepath, 'box.img')
             _check_call(['qemu-img', 'rebase', '-p', '-b', '', 'box.img'])
-            img_info_raw = _check_output(['qemu-img', 'info', '--output=json', 'box.img'])
+            img_info_raw = _check_output(
+                ['qemu-img', 'info', '--output=json', 'box.img']
+            )
             img_info = json.loads(img_info_raw.decode('utf-8'))
-            metadata = {"provider": "libvirt",
-                        "format": img_info['format'],
-                        "virtual_size": math.ceil(img_info['virtual-size'] / (1024. ** 3)),
-                        }
+            metadata = {
+                "provider": "libvirt",
+                "format": img_info['format'],
+                "virtual_size": math.ceil(img_info['virtual-size'] / (1024.0 ** 3)),
+            }
 
             logging.debug('preparing metadata.json for box %s', output)
             with open('metadata.json', 'w') as fp:
                 fp.write(json.dumps(metadata))
             logging.debug('preparing Vagrantfile for box %s', output)
-            vagrantfile = textwrap.dedent("""\
+            vagrantfile = textwrap.dedent(
+                """\
                   Vagrant.configure("2") do |config|
                     config.ssh.username = "vagrant"
                     config.ssh.password = "vagrant"
@@ -442,11 +478,18 @@ class LibvirtBuildVm(FDroidBuildVm):
                       libvirt.memory = {memory}
 
                     end
-                  end""".format_map({'memory': str(int(domainInfo[1] / 1024)), 'cpus': str(domainInfo[3])}))
+                  end""".format_map(
+                    {
+                        'memory': str(int(domainInfo[1] / 1024)),
+                        'cpus': str(domainInfo[3]),
+                    }
+                )
+            )
             with open('Vagrantfile', 'w') as fp:
                 fp.write(vagrantfile)
             try:
                 import libarchive
+
                 with libarchive.file_writer(output, 'gnutar', 'gzip') as tar:
                     logging.debug('adding files to box %s ...', output)
                     tar.add_files('metadata.json', 'Vagrantfile', 'box.img')
@@ -508,6 +551,7 @@ class LibvirtBuildVm(FDroidBuildVm):
 
     def snapshot_exists(self, snapshot_name):
         import libvirt
+
         try:
             dom = self.conn.lookupByName(self.srvname)
             return dom.snapshotLookupByName(snapshot_name) is not None
@@ -517,6 +561,7 @@ class LibvirtBuildVm(FDroidBuildVm):
     def snapshot_revert(self, snapshot_name):
         logging.info("reverting vm '%s' to snapshot '%s'", self.srvname, snapshot_name)
         import libvirt
+
         try:
             dom = self.conn.lookupByName(self.srvname)
             snap = dom.snapshotLookupByName(snapshot_name)

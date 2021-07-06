@@ -1,11 +1,11 @@
 {
   "repo": {
     "timestamp": 1502845383782,
-    "version": 21,
+    "version": 20001,
     "name": "My First F-Droid Repo Demo",
-    "icon": "fdroid-icon.png",
+    "icon": "icon.png",
     "address": "https://MyFirstFDroidRepo.org/fdroid/repo",
-    "description": "This is a repository of apps to be used with F-Droid. Applications in this repository are either official binaries built by the original application developers, or are binaries built from source by the admin of f-droid.org using the tools on https://gitlab.com/u/fdroid. ",
+    "description": "This is a repository of apps to be used with F-Droid. Applications in this repository are either official binaries built by the original application developers, or are binaries built from source by the admin of f-droid.org using the tools on https://gitlab.com/fdroid.",
     "mirrors": [
       "http://foobarfoobarfoobar.onion/fdroid/repo",
       "https://foo.bar/fdroid/repo"
@@ -27,19 +27,23 @@
       ],
       "suggestedVersionName": "0.9",
       "suggestedVersionCode": "9",
-      "description": "<p>In order to keep away curious eyes, SMS-bypass filters incoming SMS messages before they reach your inbox. Based on bughunter2.smsfilter.</p><p>Features:</p><ul><li> Discrete fake app \"Battery level\": Long tap on Battery percentage will show SMS.</li><li> Filter incoming SMS specified address: redirect the SMS to SMS-bypass messages list; remove SMS arrival sound or vibration; show a discreet notification icon (battery level); vibrate if checked in settings</li><li> Add contact from contact list</li><li> Export messages to a text file</li></ul>",
+      "description": "In order to keep away curious eyes, SMS-bypass filters incoming SMS messages\nbefore they reach your inbox. Based on bughunter2.smsfilter.\n\nFeatures:\n\n* Discrete fake app \"Battery level\": Long tap on Battery percentage will show SMS.\n* Filter incoming SMS specified address: redirect the SMS to SMS-bypass messages list; remove SMS arrival sound or vibration; show a discreet notification icon (battery level); vibrate if checked in settings\n* Add contact from contact list\n* Export messages to a text file",
       "donate": "http://rodolphe.souchaud.free.fr/donate",
       "flattrID": "cad90e036b975ed129a3ce80a0750466",
       "issueTracker": "https://gitlab.com/souch/SMSbypass/issues",
       "license": "GPL-3.0-only",
-      "name": "Battery level",
       "sourceCode": "https://gitlab.com/souch/SMSbypass/tree/HEAD",
       "summary": "Filter SMS and show them in a fake app",
       "webSite": "https://gitlab.com/souch/SMSbypass",
       "added": 1524700800000,
       "icon": "souch.smsbypass.9.png",
       "packageName": "souch.smsbypass",
-      "lastUpdated": 1524700800000
+      "lastUpdated": 1524700800000,
+      "localized": {
+        "en-US": {
+          "name": "Battery level"
+        }
+      }
     },
     {
       "categories": [
@@ -50,7 +54,6 @@
       "name": "Caffeine Tile",
       "summary": "Test app for extracting icons when an XML one is default",
       "added": 1539129600000,
-      "icon": "info.zwanenburg.caffeinetile.4.xml",
       "packageName": "info.zwanenburg.caffeinetile",
       "lastUpdated": 1539129600000
     },
@@ -73,17 +76,21 @@
       ],
       "suggestedVersionName": "0.2.1",
       "suggestedVersionCode": "2000",
-      "description": "<p>F-Droid can make use of system privileges or permissions to install, update and remove applications on its own. The only way to obtain those privileges is to become a system app.</p><p>This is where the Privileged Extension comes in - being a separate app and much smaller, it can be installed as a system app and communicate with the main app via AIDL IPC.</p><p>This has several advantages:</p><ul><li> Reduced disk usage in the system partition</li><li> System updates don't remove F-Droid</li><li> The process of installing into system via root is safer</li></ul><p>This is packaged as an OTA (Over-The-Air) update ZIP file.  It must be installed using TWRP or other Android recovery that can flash updates to the system from the /data/data/org.fdroid.fdroid folder on the /data partition. The standalone APK is called F-Droid Privileged Extension.</p>",
+      "description": "F-Droid can make use of system privileges or permissions to\ninstall, update and remove applications on its own. The only way to obtain those\nprivileges is to become a system app.\n\nThis is where the Privileged Extension comes in - being a separate app and much\nsmaller, it can be installed as a system app and communicate with the main app\nvia AIDL IPC.\n\nThis has several advantages:\n\n* Reduced disk usage in the system partition\n* System updates don't remove F-Droid\n* The process of installing into system via root is safer\n\nThis is packaged as an OTA (Over-The-Air) update ZIP file.  It must be installed\nusing TWRP or other Android recovery that can flash updates to the system from\nthe /data/data/org.fdroid.fdroid folder on the /data partition. The standalone\nAPK is called F-Droid Privileged Extension.",
       "donate": "https://f-droid.org/about",
       "issueTracker": "https://gitlab.com/fdroid/privileged-extension/issues",
       "license": "Apache-2.0",
-      "name": "fake.ota.update_1234",
       "sourceCode": "https://gitlab.com/fdroid/privileged-extension",
       "summary": "Tests whether OTA ZIP files are being include",
       "webSite": "https://f-droid.org",
       "added": 1457568000000,
       "packageName": "fake.ota.update",
-      "lastUpdated": 1457568000000
+      "lastUpdated": 1457568000000,
+      "localized": {
+        "en-US": {
+          "name": "fake.ota.update_1234"
+        }
+      }
     },
     {
       "categories": [
@@ -106,12 +113,16 @@
       "suggestedVersionCode": "99999999",
       "liberapay": "12334",
       "license": "GPL-3.0-only",
-      "name": "OBB Main Old Version",
       "sourceCode": "https://github.com/eighthave/urzip",
       "added": 1388448000000,
       "icon": "obb.main.oldversion.1444412523.png",
       "packageName": "obb.main.oldversion",
-      "lastUpdated": 1388448000000
+      "lastUpdated": 1388448000000,
+      "localized": {
+        "en-US": {
+          "name": "OBB Main Old Version"
+        }
+      }
     },
     {
       "bitcoin": "1Fi5xUHiAPRKxHvyUGVFGt9extBe8Srdbk",
@@ -120,12 +131,16 @@
       ],
       "suggestedVersionCode": "99999999",
       "license": "GPL-3.0-only",
-      "name": "OBB Main Two Versions",
       "sourceCode": "https://github.com/eighthave/urzip",
       "added": 1444608000000,
       "icon": "obb.main.twoversions.1101617.png",
       "packageName": "obb.main.twoversions",
-      "lastUpdated": 1466380800000
+      "lastUpdated": 1466380800000,
+      "localized": {
+        "en-US": {
+          "name": "OBB Main Two Versions"
+        }
+      }
     },
     {
       "bitcoin": "1Fi5xUHiAPRKxHvyUGVFGt9extBe8Srdbk",
@@ -134,7 +149,6 @@
       ],
       "suggestedVersionCode": "99999999",
       "license": "GPL-3.0-only",
-      "name": "OBB Main/Patch Current",
       "sourceCode": "https://github.com/eighthave/urzip",
       "added": 1461369600000,
       "icon": "obb.mainpatch.current.1619.png",
@@ -144,6 +158,7 @@
         "en-US": {
           "featureGraphic": "featureGraphic_ffhLaojxbGAfu9ROe1MJgK5ux8d0OVc6b65nmvOBaTk=.png",
           "icon": "icon_WI0pkO3LsklrsTAnRr-OQSxkkoMY41lYe2-fAvXLiLg=.png",
+          "name": "OBB Main/Patch Current",
           "phoneScreenshots": [
             "screenshot-main.png"
           ],
@@ -162,16 +177,20 @@
       ],
       "suggestedVersionName": "1.5",
       "suggestedVersionCode": "6",
-      "description": "<p>Activates silent mode during calendar events.</p>",
+      "description": "Activates silent mode during calendar events.",
       "issueTracker": "https://github.com/miguelvps/PoliteDroid/issues",
       "license": "GPL-3.0-only",
-      "name": "Polite Droid",
       "sourceCode": "https://github.com/miguelvps/PoliteDroid",
       "summary": "Calendar tool",
       "added": 1498176000000,
       "icon": "com.politedroid.6.png",
       "packageName": "com.politedroid",
-      "lastUpdated": 1498176000000
+      "lastUpdated": 1498176000000,
+      "localized": {
+        "en-US": {
+          "name": "Polite Droid"
+        }
+      }
     },
     {
       "authorWebSite": "https://guardianproject.info",
@@ -183,11 +202,10 @@
         "2.0"
       ],
       "suggestedVersionCode": "2147483647",
-      "description": "<p>It\u2019s Urzip \u662f\u4e00\u4e2a\u83b7\u5f97\u5df2\u5b89\u88c5 APK \u76f8\u5173\u4fe1\u606f\u7684\u5b9e\u7528\u5de5\u5177\u3002\u5b83\u4ece\u60a8\u7684\u8bbe\u5907\u4e0a\u5df2\u5b89\u88c5\u7684\u6240\u6709\u5e94\u7528\u5f00\u59cb\uff0c\u4e00\u952e\u89e6\u6478\u5373\u53ef\u663e\u793a APK \u7684\u6307\u7eb9\uff0c\u5e76\u4e14\u63d0\u4f9b\u5230\u8fbe virustotal.com \u548c androidobservatory.org \u7684\u5feb\u6377\u94fe\u63a5\uff0c\u8ba9\u60a8\u65b9\u4fbf\u5730\u4e86\u89e3\u7279\u5b9a APK \u7684\u6863\u6848\u3002\u5b83\u8fd8\u53ef\u4ee5\u8ba9\u60a8\u5bfc\u51fa\u7b7e\u540d\u8bc1\u4e66\u548c\u751f\u6210 ApkSignaturePin Pin \u6587\u4ef6\u4f9b TrustedIntents \u5e93\u4f7f\u7528\u3002</p><p>\u2605 Urzip \u652f\u6301\u4e0b\u5217\u8bed\u8a00\uff1a Deutsch, English, espa\u00f1ol, suomi, \u65e5\u672c\u8a9e, \ud55c\uad6d\uc5b4, Norsk, portugu\u00eas (Portugal), \u0420\u0443\u0441\u0441\u043a\u0438\u0439, Sloven\u0161\u010dina, T\u00fcrk\u00e7e \u6ca1\u770b\u5230\u60a8\u7684\u8bed\u8a00\uff1f\u5e2e\u5fd9\u7ffb\u8bd1\u672c\u5e94\u7528\u5427\uff1a https://www.transifex.com/projects/p/urzip</p><p>\u2605 \u81f4\u7528\u6237\uff1a\u6211\u4eec\u8fd8\u7f3a\u5c11\u4f60\u559c\u6b22\u7684\u529f\u80fd\uff1f\u53d1\u73b0\u4e86\u4e00\u4e2a bug\uff1f\u8bf7\u544a\u8bc9\u6211\u4eec\uff01\u6211\u4eec\u4e50\u4e8e\u542c\u53d6\u60a8\u7684\u610f\u89c1\u3002\u8bf7\u53d1\u9001\u7535\u5b50\u90ae\u4ef6\u81f3: support@guardianproject.info \u6216\u8005\u52a0\u5165\u6211\u4eec\u7684\u804a\u5929\u5ba4 https://guardianproject.info/contact</p>",
+      "description": "It\u2019s Urzip \u662f\u4e00\u4e2a\u83b7\u5f97\u5df2\u5b89\u88c5 APK \u76f8\u5173\u4fe1\u606f\u7684\u5b9e\u7528\u5de5\u5177\u3002\u5b83\u4ece\u60a8\u7684\u8bbe\u5907\u4e0a\u5df2\u5b89\u88c5\u7684\u6240\u6709\u5e94\u7528\u5f00\u59cb\uff0c\u4e00\u952e\u89e6\u6478\u5373\u53ef\u663e\u793a APK \u7684\u6307\u7eb9\uff0c\u5e76\u4e14\u63d0\u4f9b\u5230\u8fbe virustotal.com \u548c androidobservatory.org \u7684\u5feb\u6377\u94fe\u63a5\uff0c\u8ba9\u60a8\u65b9\u4fbf\u5730\u4e86\u89e3\u7279\u5b9a APK \u7684\u6863\u6848\u3002\u5b83\u8fd8\u53ef\u4ee5\u8ba9\u60a8\u5bfc\u51fa\u7b7e\u540d\u8bc1\u4e66\u548c\u751f\u6210 ApkSignaturePin Pin \u6587\u4ef6\u4f9b TrustedIntents \u5e93\u4f7f\u7528\u3002\n\n\u2605 Urzip \u652f\u6301\u4e0b\u5217\u8bed\u8a00\uff1a Deutsch, English, espa\u00f1ol, suomi, \u65e5\u672c\u8a9e, \ud55c\uad6d\uc5b4, Norsk, portugu\u00eas (Portugal), \u0420\u0443\u0441\u0441\u043a\u0438\u0439, Sloven\u0161\u010dina, T\u00fcrk\u00e7e\n\u6ca1\u770b\u5230\u60a8\u7684\u8bed\u8a00\uff1f\u5e2e\u5fd9\u7ffb\u8bd1\u672c\u5e94\u7528\u5427\uff1a\nhttps://www.transifex.com/projects/p/urzip\n\n\u2605 \u81f4\u7528\u6237\uff1a\u6211\u4eec\u8fd8\u7f3a\u5c11\u4f60\u559c\u6b22\u7684\u529f\u80fd\uff1f\u53d1\u73b0\u4e86\u4e00\u4e2a bug\uff1f\u8bf7\u544a\u8bc9\u6211\u4eec\uff01\u6211\u4eec\u4e50\u4e8e\u542c\u53d6\u60a8\u7684\u610f\u89c1\u3002\u8bf7\u53d1\u9001\u7535\u5b50\u90ae\u4ef6\u81f3: support@guardianproject.info \u6216\u8005\u52a0\u5165\u6211\u4eec\u7684\u804a\u5929\u5ba4 https://guardianproject.info/contact\n",
       "issueTracker": "https://dev.guardianproject.info/projects/urzip/issues",
       "liberapayID": "9999999",
       "license": "GPL-3.0-only",
-      "name": "urzip-\u03c0\u00c7\u00c7\u03c0\u00c7\u00c7\u73b0\u4ee3\u6c49\u8bed\u901a\u7528\u5b57-\u0431\u044a\u043b\u0433\u0430\u0440\u0441\u043a\u0438-\u0639\u0631\u0628\u064a1234",
       "openCollective": "f-droid-just-testing",
       "sourceCode": "https://github.com/guardianproject/urzip",
       "summary": "\u4e00\u4e2a\u5b9e\u7528\u5de5\u5177\uff0c\u83b7\u53d6\u5df2\u5b89\u88c5\u5728\u60a8\u7684\u8bbe\u5907\u4e0a\u7684\u5e94\u7528\u7684\u6709\u5173\u4fe1\u606f",

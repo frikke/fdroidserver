@@ -11,10 +11,13 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import yaml
+import zipfile
 from unittest import mock
 
 localmodule = os.path.realpath(
-    os.path.join(os.path.dirname(inspect.getfile(inspect.currentframe())), '..'))
+    os.path.join(os.path.dirname(inspect.getfile(inspect.currentframe())), '..')
+)
 print('localmodule: ' + localmodule)
 if localmodule not in sys.path:
     sys.path.insert(0, localmodule)
@@ -25,76 +28,173 @@ import fdroidserver.metadata
 import fdroidserver.scanner
 
 
+class FakeProcess:
+    output = 'fake output'
+    returncode = 0
+
+    def __init__(self, args, **kwargs):
+        print('FakeFDroidPopen', args, kwargs)
+
+
 class BuildTest(unittest.TestCase):
     '''fdroidserver/build.py'''
 
-    def _set_build_tools(self):
-        build_tools = os.path.join(fdroidserver.common.config['sdk_path'], 'build-tools')
-        if os.path.exists(build_tools):
-            fdroidserver.common.config['build_tools'] = ''
-            for f in sorted(os.listdir(build_tools), reverse=True):
-                versioned = os.path.join(build_tools, f)
-                if os.path.isdir(versioned) \
-                        and os.path.isfile(os.path.join(versioned, 'aapt')):
-                    fdroidserver.common.config['build_tools'] = versioned
-                    break
-            return True
-        else:
-            print('no build-tools found: ' + build_tools)
-            return False
-
-    def _find_all(self):
-        for cmd in ('aapt', 'adb', 'android', 'zipalign'):
-            path = fdroidserver.common.find_sdk_tools_cmd(cmd)
-            if path is not None:
-                self.assertTrue(os.path.exists(path))
-                self.assertTrue(os.path.isfile(path))
-
     def setUp(self):
         logging.basicConfig(level=logging.DEBUG)
+        logger = logging.getLogger('androguard.axml')
+        logger.setLevel(logging.INFO)  # tame the axml debug messages
         self.basedir = os.path.join(localmodule, 'tests')
         self.tmpdir = os.path.abspath(os.path.join(self.basedir, '..', '.testfiles'))
         if not os.path.exists(self.tmpdir):
             os.makedirs(self.tmpdir)
         os.chdir(self.basedir)
+        fdroidserver.common.config = None
+        fdroidserver.build.config = None
+
+    def create_fake_android_home(self, d):
+        os.makedirs(os.path.join(d, 'build-tools'), exist_ok=True)
+        os.makedirs(os.path.join(d, 'platform-tools'), exist_ok=True)
+        os.makedirs(os.path.join(d, 'tools'), exist_ok=True)
 
     def test_get_apk_metadata(self):
         config = dict()
         fdroidserver.common.fill_config_defaults(config)
         fdroidserver.common.config = config
         fdroidserver.build.config = config
-        self._set_build_tools()
         try:
             config['aapt'] = fdroidserver.common.find_sdk_tools_cmd('aapt')
         except fdroidserver.exception.FDroidException:
             pass  # aapt is not required if androguard is present
 
         testcases = [
-            ('repo/obb.main.twoversions_1101613.apk', 'obb.main.twoversions', '1101613', '0.1', None),
-            ('org.bitbucket.tickytacky.mirrormirror_1.apk', 'org.bitbucket.tickytacky.mirrormirror', '1', '1.0', None),
-            ('org.bitbucket.tickytacky.mirrormirror_2.apk', 'org.bitbucket.tickytacky.mirrormirror', '2', '1.0.1', None),
-            ('org.bitbucket.tickytacky.mirrormirror_3.apk', 'org.bitbucket.tickytacky.mirrormirror', '3', '1.0.2', None),
-            ('org.bitbucket.tickytacky.mirrormirror_4.apk', 'org.bitbucket.tickytacky.mirrormirror', '4', '1.0.3', None),
-            ('org.dyndns.fules.ck_20.apk', 'org.dyndns.fules.ck', '20', 'v1.6pre2',
-             ['arm64-v8a', 'armeabi', 'armeabi-v7a', 'mips', 'mips64', 'x86', 'x86_64']),
+            (
+                'repo/obb.main.twoversions_1101613.apk',
+                'obb.main.twoversions',
+                '1101613',
+                '0.1',
+                None,
+            ),
+            (
+                'org.bitbucket.tickytacky.mirrormirror_1.apk',
+                'org.bitbucket.tickytacky.mirrormirror',
+                '1',
+                '1.0',
+                None,
+            ),
+            (
+                'org.bitbucket.tickytacky.mirrormirror_2.apk',
+                'org.bitbucket.tickytacky.mirrormirror',
+                '2',
+                '1.0.1',
+                None,
+            ),
+            (
+                'org.bitbucket.tickytacky.mirrormirror_3.apk',
+                'org.bitbucket.tickytacky.mirrormirror',
+                '3',
+                '1.0.2',
+                None,
+            ),
+            (
+                'org.bitbucket.tickytacky.mirrormirror_4.apk',
+                'org.bitbucket.tickytacky.mirrormirror',
+                '4',
+                '1.0.3',
+                None,
+            ),
+            (
+                'org.dyndns.fules.ck_20.apk',
+                'org.dyndns.fules.ck',
+                '20',
+                'v1.6pre2',
+                [
+                    'arm64-v8a',
+                    'armeabi',
+                    'armeabi-v7a',
+                    'mips',
+                    'mips64',
+                    'x86',
+                    'x86_64',
+                ],
+            ),
             ('urzip.apk', 'info.guardianproject.urzip', '100', '0.1', None),
             ('urzip-badcert.apk', 'info.guardianproject.urzip', '100', '0.1', None),
             ('urzip-badsig.apk', 'info.guardianproject.urzip', '100', '0.1', None),
             ('urzip-release.apk', 'info.guardianproject.urzip', '100', '0.1', None),
-            ('urzip-release-unsigned.apk', 'info.guardianproject.urzip', '100', '0.1', None),
+            (
+                'urzip-release-unsigned.apk',
+                'info.guardianproject.urzip',
+                '100',
+                '0.1',
+                None,
+            ),
             ('repo/com.politedroid_3.apk', 'com.politedroid', '3', '1.2', None),
             ('repo/com.politedroid_4.apk', 'com.politedroid', '4', '1.3', None),
             ('repo/com.politedroid_5.apk', 'com.politedroid', '5', '1.4', None),
             ('repo/com.politedroid_6.apk', 'com.politedroid', '6', '1.5', None),
-            ('repo/duplicate.permisssions_9999999.apk', 'duplicate.permisssions', '9999999', '', None),
-            ('repo/info.zwanenburg.caffeinetile_4.apk', 'info.zwanenburg.caffeinetile', '4', '1.3', None),
-            ('repo/obb.main.oldversion_1444412523.apk', 'obb.main.oldversion', '1444412523', '0.1', None),
-            ('repo/obb.mainpatch.current_1619_another-release-key.apk', 'obb.mainpatch.current', '1619', '0.1', None),
-            ('repo/obb.mainpatch.current_1619.apk', 'obb.mainpatch.current', '1619', '0.1', None),
-            ('repo/obb.main.twoversions_1101613.apk', 'obb.main.twoversions', '1101613', '0.1', None),
-            ('repo/obb.main.twoversions_1101615.apk', 'obb.main.twoversions', '1101615', '0.1', None),
-            ('repo/obb.main.twoversions_1101617.apk', 'obb.main.twoversions', '1101617', '0.1', None),
-            ('repo/urzip-; Рахма́, [rɐxˈmanʲɪnəf] سيرجي_رخمانينوف 谢·.apk', 'info.guardianproject.urzip', '100', '0.1', None),
+            (
+                'repo/duplicate.permisssions_9999999.apk',
+                'duplicate.permisssions',
+                '9999999',
+                '',
+                None,
+            ),
+            (
+                'repo/info.zwanenburg.caffeinetile_4.apk',
+                'info.zwanenburg.caffeinetile',
+                '4',
+                '1.3',
+                None,
+            ),
+            (
+                'repo/obb.main.oldversion_1444412523.apk',
+                'obb.main.oldversion',
+                '1444412523',
+                '0.1',
+                None,
+            ),
+            (
+                'repo/obb.mainpatch.current_1619_another-release-key.apk',
+                'obb.mainpatch.current',
+                '1619',
+                '0.1',
+                None,
+            ),
+            (
+                'repo/obb.mainpatch.current_1619.apk',
+                'obb.mainpatch.current',
+                '1619',
+                '0.1',
+                None,
+            ),
+            (
+                'repo/obb.main.twoversions_1101613.apk',
+                'obb.main.twoversions',
+                '1101613',
+                '0.1',
+                None,
+            ),
+            (
+                'repo/obb.main.twoversions_1101615.apk',
+                'obb.main.twoversions',
+                '1101615',
+                '0.1',
+                None,
+            ),
+            (
+                'repo/obb.main.twoversions_1101617.apk',
+                'obb.main.twoversions',
+                '1101617',
+                '0.1',
+                None,
+            ),
+            (
+                'repo/urzip-; Рахма́, [rɐxˈmanʲɪnəf] سيرجي_رخمانينوف 谢·.apk',
+                'info.guardianproject.urzip',
+                '100',
+                '0.1',
+                None,
+            ),
         ]
         for apkfilename, appid, versionCode, versionName, nativecode in testcases:
             app = fdroidserver.metadata.App()
@@ -107,9 +207,106 @@ class BuildTest(unittest.TestCase):
             self.assertEqual(versionCode, vc)
             self.assertEqual(versionName, vn)
 
+    def test_build_local_ndk(self):
+        """Test if `fdroid build` detects installed NDKs and auto-installs when missing"""
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
+        os.chdir(testdir)
+
+        config = {'ndk_paths': {}, 'sdk_path': tempfile.mkdtemp(prefix='android-sdk-')}
+        fdroidserver.common.config = config
+        fdroidserver.build.config = config
+        fdroidserver.build.options = mock.Mock()
+        fdroidserver.build.options.scan_binary = False
+        fdroidserver.build.options.notarball = True
+        fdroidserver.build.options.skipscan = True
+
+        app = fdroidserver.metadata.App()
+        app.id = 'mocked.app.id'
+        build = fdroidserver.metadata.Build()
+        build.commit = '1.0'
+        build.output = app.id + '.apk'
+        build.versionCode = '1'
+        build.versionName = '1.0'
+        build.ndk = 'r21e'  # aka 21.4.7075529
+        vcs = mock.Mock()
+
+        def make_fake_apk(output, build):
+            with open(build.output, 'w') as fp:
+                fp.write('APK PLACEHOLDER')
+            return output
+
+        def fake_download_file(_ignored, local_filename):
+            _ignored  # silence the linters
+            with zipfile.ZipFile(local_filename, 'x') as zipfp:
+                zipfp.writestr(
+                    'android-ndk-r21e/source.properties',
+                    'Pkg.Revision = 21.4.7075529\n',
+                )
+
+        # use "as _ignored" just to make a pretty layout
+        with mock.patch(
+            'fdroidserver.common.replace_build_vars', wraps=make_fake_apk
+        ) as _ignored, mock.patch(
+            'fdroidserver.common.get_native_code', return_value='x86'
+        ) as _ignored, mock.patch(
+            'fdroidserver.common.get_apk_id',
+            return_value=(app.id, build.versionCode, build.versionName),
+        ) as _ignored, mock.patch(
+            'fdroidserver.common.is_apk_and_debuggable', return_value=False
+        ) as _ignored, mock.patch(
+            'fdroidserver.common.sha256sum',
+            return_value='ad7ce5467e18d40050dc51b8e7affc3e635c85bd8c59be62de32352328ed467e',
+        ) as _ignored, mock.patch(
+            'fdroidserver.common.is_apk_and_debuggable', return_value=False
+        ) as _ignored, mock.patch(
+            'fdroidserver.build.FDroidPopen', FakeProcess
+        ) as _ignored, mock.patch(
+            'fdroidserver.net.download_file', wraps=fake_download_file
+        ) as _ignored:
+            _ignored  # silence the linters
+            with self.assertRaises(
+                fdroidserver.exception.FDroidException,
+                msg="No NDK setup, `fdroid build` should fail with error",
+            ):
+                fdroidserver.build.build_local(
+                    app,
+                    build,
+                    vcs,
+                    build_dir=testdir,
+                    output_dir=testdir,
+                    log_dir=None,
+                    srclib_dir=None,
+                    extlib_dir=None,
+                    tmp_dir=None,
+                    force=False,
+                    onserver=False,
+                    refresh=False,
+                )
+            # now run `fdroid build --onserver`
+            self.assertTrue('r21e' not in config['ndk_paths'])
+            fdroidserver.build.build_local(
+                app,
+                build,
+                vcs,
+                build_dir=testdir,
+                output_dir=testdir,
+                log_dir=os.getcwd(),
+                srclib_dir=None,
+                extlib_dir=None,
+                tmp_dir=None,
+                force=False,
+                onserver=True,
+                refresh=False,
+            )
+            self.assertTrue(os.path.exists(config['ndk_paths']['r21e']))
+
     def test_build_local_clean(self):
         """Test if `fdroid build` cleans ant and gradle build products"""
-        testdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir)
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         os.chdir(testdir)
 
         config = dict()
@@ -142,18 +339,21 @@ class BuildTest(unittest.TestCase):
 
         os.mkdir('build')
         os.mkdir('build/reports')
-        with open('build.gradle', 'w') as fp:
+        with open('build.gradle', 'w', encoding='utf-8') as fp:
             fp.write('// placeholder')
 
         os.mkdir('bin')
         os.mkdir('gen')
-        with open('build.xml', 'w') as fp:
-            fp.write(textwrap.dedent(
-                """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+        with open('build.xml', 'w', encoding='utf-8') as fp:
+            fp.write(
+                textwrap.dedent(
+                    """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
                 <project basedir="." default="clean" name="mockapp">
                 <target name="release"/>
                 <target name="clean"/>
-                </project>"""))
+                </project>"""
+                )
+            )
 
         def make_fake_apk(output, build):
             with open(build.output, 'w') as fp:
@@ -162,14 +362,26 @@ class BuildTest(unittest.TestCase):
 
         with mock.patch('fdroidserver.common.replace_build_vars', wraps=make_fake_apk):
             with mock.patch('fdroidserver.common.get_native_code', return_value='x86'):
-                with mock.patch('fdroidserver.common.get_apk_id',
-                                return_value=(app.id, build.versionCode, build.versionName)):
-                    with mock.patch('fdroidserver.common.is_apk_and_debuggable', return_value=False):
+                with mock.patch(
+                    'fdroidserver.common.get_apk_id',
+                    return_value=(app.id, build.versionCode, build.versionName),
+                ):
+                    with mock.patch(
+                        'fdroidserver.common.is_apk_and_debuggable', return_value=False
+                    ):
                         fdroidserver.build.build_local(
-                            app, build, vcs,
-                            build_dir=testdir, output_dir=testdir,
-                            log_dir=None, srclib_dir=None, extlib_dir=None, tmp_dir=None,
-                            force=False, onserver=False, refresh=False
+                            app,
+                            build,
+                            vcs,
+                            build_dir=testdir,
+                            output_dir=testdir,
+                            log_dir=None,
+                            srclib_dir=None,
+                            extlib_dir=None,
+                            tmp_dir=None,
+                            force=False,
+                            onserver=False,
+                            refresh=False,
                         )
 
         self.assertTrue(os.path.exists('foo.aar'))
@@ -183,14 +395,15 @@ class BuildTest(unittest.TestCase):
         self.assertFalse(os.path.exists('gradle-wrapper.jar'))
 
     def test_scan_with_extlib(self):
-        testdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir)
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         os.chdir(testdir)
         os.mkdir("build")
 
         config = dict()
         config['sdk_path'] = os.getenv('ANDROID_HOME')
         config['ndk_paths'] = {'r10d': os.getenv('ANDROID_NDK_HOME')}
-        config['build_tools'] = 'FAKE_BUILD_TOOLS_VERSION'
         fdroidserver.common.config = config
         app = fdroidserver.metadata.App()
         app.id = 'com.gpl.rpg.AndorsTrail'
@@ -200,9 +413,11 @@ class BuildTest(unittest.TestCase):
         os.makedirs("extlib/android")
         # write a fake binary jar file the scanner should definitely error on
         with open('extlib/android/android-support-v4r11.jar', 'wb') as file:
-            file.write(b'PK\x03\x04\x14\x00\x08\x00\x08\x00-\x0eiA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\t\x00\x04\x00META-INF/\xfe\xca\x00\x00\x03\x00PK\x07\x08\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00')
+            file.write(
+                b'PK\x03\x04\x14\x00\x08\x00\x08\x00-\x0eiA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\t\x00\x04\x00META-INF/\xfe\xca\x00\x00\x03\x00PK\x07\x08\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00'
+            )
 
-        class FakeVcs():
+        class FakeVcs:
             # no need to change to the correct commit here
             def gotorevision(self, rev, refresh=True):
                 pass
@@ -214,25 +429,133 @@ class BuildTest(unittest.TestCase):
         build.extlibs = []
         os.makedirs('build/libs')
         shutil.copy('extlib/android/android-support-v4r11.jar', 'build/libs')
-        fdroidserver.common.prepare_source(FakeVcs(), app, build,
-                                           "build", "ignore", "extlib")
+        fdroidserver.common.prepare_source(
+            FakeVcs(), app, build, "build", "ignore", "extlib"
+        )
         count = fdroidserver.scanner.scan_source("build", build)
         self.assertEqual(1, count, "Should produce a scanner error without extlib")
 
         # Now try again as an extlib
         build.extlibs = ['android/android-support-v4r11.jar']
-        fdroidserver.common.prepare_source(FakeVcs(), app, build,
-                                           "build", "ignore", "extlib")
+        fdroidserver.common.prepare_source(
+            FakeVcs(), app, build, "build", "ignore", "extlib"
+        )
         count = fdroidserver.scanner.scan_source("build", build)
         self.assertEqual(0, count, "Shouldn't error on jar from extlib")
+
+    def test_failed_verifies_are_not_in_unsigned(self):
+
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
+        os.chdir(testdir)
+        sdk_path = os.path.join(testdir, 'android-sdk')
+        self.create_fake_android_home(sdk_path)
+        with open('config.yml', 'w') as fp:
+            yaml.dump({'sdk_path': sdk_path}, fp)
+        os.chmod('config.yml', 0o600)
+        fdroidserver.common.build = fdroidserver.common.read_config()
+
+        os.mkdir('metadata')
+        appid = 'info.guardianproject.checkey'
+        metadata_file = os.path.join('metadata', appid + '.yml')
+        shutil.copy(os.path.join(self.basedir, metadata_file), 'metadata')
+        with open(metadata_file) as fp:
+            app = fdroidserver.metadata.App(yaml.safe_load(fp))
+        app['RepoType'] = 'git'
+        app[
+            'Binaries'
+        ] = 'https://example.com/fdroid/repo/info.guardianproject.checkey_%v.apk'
+        build = fdroidserver.metadata.Build(
+            {
+                'versionCode': 123,
+                'versionName': '1.2.3',
+                'commit': '1.2.3',
+                'disable': False,
+            }
+        )
+        app['Builds'] = [build]
+        fdroidserver.metadata.write_metadata(metadata_file, app)
+
+        os.makedirs(os.path.join('unsigned', 'binaries'))
+        production_result = os.path.join(
+            'unsigned', '%s_%d.apk' % (appid, build['versionCode'])
+        )
+        production_compare_file = os.path.join(
+            'unsigned', 'binaries', '%s_%d.binary.apk' % (appid, build['versionCode'])
+        )
+        os.makedirs(os.path.join('tmp', 'binaries'))
+        test_result = os.path.join('tmp', '%s_%d.apk' % (appid, build['versionCode']))
+        test_compare_file = os.path.join(
+            'tmp', 'binaries', '%s_%d.binary.apk' % (appid, build['versionCode'])
+        )
+        with mock.patch(
+            'fdroidserver.common.force_exit', lambda *args: None
+        ) as a, mock.patch(
+            'fdroidserver.common.get_android_tools_version_log', lambda: 'fake'
+        ) as b, mock.patch(
+            'fdroidserver.common.FDroidPopen', FakeProcess
+        ) as c, mock.patch(
+            'fdroidserver.build.FDroidPopen', FakeProcess
+        ) as d, mock.patch(
+            'fdroidserver.build.trybuild', lambda *args: True
+        ) as e, mock.patch(
+            'fdroidserver.net.download_file', lambda *args, **kwargs: None
+        ) as f:
+            a, b, c, d, e, f  # silence linters' "unused" warnings
+
+            with mock.patch('sys.argv', ['fdroid build', appid]):
+                # successful comparison
+                open(production_result, 'w').close()
+                open(production_compare_file, 'w').close()
+                with mock.patch('fdroidserver.common.verify_apks', lambda *args: None):
+                    fdroidserver.build.main()
+                self.assertTrue(os.path.exists(production_result))
+                self.assertTrue(os.path.exists(production_compare_file))
+                # failed comparison
+                open(production_result, 'w').close()
+                open(production_compare_file, 'w').close()
+                with mock.patch(
+                    'fdroidserver.common.verify_apks', lambda *args: 'failed'
+                ):
+                    fdroidserver.build.main()
+                self.assertFalse(os.path.exists(production_result))
+                self.assertFalse(os.path.exists(production_compare_file))
+
+            with mock.patch('sys.argv', ['fdroid build', '--test', appid]):
+                # successful comparison
+                open(test_result, 'w').close()
+                open(test_compare_file, 'w').close()
+                with mock.patch('fdroidserver.common.verify_apks', lambda *args: None):
+                    fdroidserver.build.main()
+                self.assertTrue(os.path.exists(test_result))
+                self.assertTrue(os.path.exists(test_compare_file))
+                self.assertFalse(os.path.exists(production_result))
+                self.assertFalse(os.path.exists(production_compare_file))
+                # failed comparison
+                open(test_result, 'w').close()
+                open(test_compare_file, 'w').close()
+                with mock.patch(
+                    'fdroidserver.common.verify_apks', lambda *args: 'failed'
+                ):
+                    fdroidserver.build.main()
+                self.assertTrue(os.path.exists(test_result))
+                self.assertFalse(os.path.exists(test_compare_file))
+                self.assertFalse(os.path.exists(production_result))
+                self.assertFalse(os.path.exists(production_compare_file))
 
 
 if __name__ == "__main__":
     os.chdir(os.path.dirname(__file__))
 
     parser = optparse.OptionParser()
-    parser.add_option("-v", "--verbose", action="store_true", default=False,
-                      help="Spew out even more information than normal")
+    parser.add_option(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Spew out even more information than normal",
+    )
     (fdroidserver.common.options, args) = parser.parse_args(['--verbose'])
 
     newSuite = unittest.TestSuite()

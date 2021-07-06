@@ -31,10 +31,12 @@ from distutils.version import LooseVersion
 import logging
 import copy
 import urllib.parse
+from pathlib import Path
 
 from . import _
 from . import common
 from . import metadata
+from . import net
 from .exception import VCSException, NoSubmodulesException, FDroidException, MetaDataException
 
 
@@ -61,9 +63,9 @@ def check_http(app):
                 raise FDroidException(_('UpdateCheckData has invalid URL: {url}').format(url=urlcode))
 
         vercode = None
-        if len(urlcode) > 0:
+        if urlcode:
             logging.debug("...requesting {0}".format(urlcode))
-            req = urllib.request.Request(urlcode, None)
+            req = urllib.request.Request(urlcode, None, headers=net.HEADERS)
             resp = urllib.request.urlopen(req, None, 20)  # nosec B310 scheme is filtered above
             page = resp.read().decode('utf-8')
 
@@ -73,7 +75,7 @@ def check_http(app):
             vercode = m.group(1).strip()
 
         version = "??"
-        if len(urlver) > 0:
+        if urlver:
             if urlver != '.':
                 logging.debug("...requesting {0}".format(urlver))
                 req = urllib.request.Request(urlver, None)
@@ -108,10 +110,10 @@ def check_tags(app, pattern):
     try:
 
         if app.RepoType == 'srclib':
-            build_dir = os.path.join('build', 'srclib', app.Repo)
+            build_dir = Path('build/srclib') / app.Repo
             repotype = common.getsrclibvcs(app.Repo)
         else:
-            build_dir = os.path.join('build', app.id)
+            build_dir = Path('build') / app.id
             repotype = app.RepoType
 
         if repotype not in ('git', 'git-svn', 'hg', 'bzr'):
@@ -129,7 +131,6 @@ def check_tags(app, pattern):
 
         try_init_submodules(app, last_build, vcs)
 
-        hpak = None
         htag = None
         hver = None
         hcode = "0"
@@ -158,26 +159,72 @@ def check_tags(app, pattern):
             logging.debug("Check tag: '{0}'".format(tag))
             vcs.gotorevision(tag)
 
-            for subdir in possible_subdirs(app):
-                if subdir == '.':
-                    root_dir = build_dir
-                else:
-                    root_dir = os.path.join(build_dir, subdir)
-                paths = common.manifest_paths(root_dir, last_build.gradle)
-                version, vercode, package = common.parse_androidmanifests(paths, app)
-                if vercode:
-                    logging.debug("Manifest exists in subdir '{0}'. Found version {1} ({2})"
-                                  .format(subdir, version, vercode))
-                    i_vercode = common.version_code_string_to_int(vercode)
-                    if i_vercode > common.version_code_string_to_int(hcode):
-                        hpak = package
-                        htag = tag
-                        hcode = str(i_vercode)
-                        hver = version
+            if app.UpdateCheckData:
+                filecode, codeex, filever, verex = app.UpdateCheckData.split('|')
 
-        if not hpak:
-            return (None, "Couldn't find package ID", None)
+                if filecode:
+                    filecode = build_dir / filecode
+                    if not filecode.is_file():
+                        logging.debug("UpdateCheckData file {0} not found in tag {1}".format(filecode, tag))
+                        continue
+                    filecontent = filecode.read_text()
+                else:
+                    filecontent = tag
+
+                vercode = tag
+                if codeex:
+                    m = re.search(codeex, filecontent)
+                    if not m:
+                        continue
+
+                    vercode = m.group(1).strip()
+
+                if filever:
+                    if filever != '.':
+                        filever = build_dir / filever
+                        if filever.is_file():
+                            filecontent = filever.read_text()
+                        else:
+                            logging.debug("UpdateCheckData file {0} not found in tag {1}".format(filever, tag))
+                else:
+                    filecontent = tag
+
+                version = tag
+                if verex:
+                    m = re.search(verex, filecontent)
+                    if m:
+                        version = m.group(1)
+
+                logging.debug("UpdateCheckData found version {0} ({1})"
+                              .format(version, vercode))
+                i_vercode = common.version_code_string_to_int(vercode)
+                if i_vercode > common.version_code_string_to_int(hcode):
+                    htag = tag
+                    hcode = str(i_vercode)
+                    hver = version
+            else:
+                for subdir in possible_subdirs(app):
+                    root_dir = build_dir / subdir
+                    paths = common.manifest_paths(root_dir, last_build.gradle)
+                    version, vercode, _package = common.parse_androidmanifests(paths, app)
+                    if version == 'Unknown' or version == 'Ignore':
+                        version = tag
+                    if vercode:
+                        logging.debug("Manifest exists in subdir '{0}'. Found version {1} ({2})"
+                                      .format(subdir, version, vercode))
+                        i_vercode = common.version_code_string_to_int(vercode)
+                        if i_vercode > common.version_code_string_to_int(hcode):
+                            htag = tag
+                            hcode = str(i_vercode)
+                            hver = version
+
         if hver:
+            try:
+                commit = vcs.getref(htag)
+                if commit:
+                    return (hver, hcode, commit)
+            except VCSException:
+                pass
             return (hver, hcode, htag)
         return (None, "Couldn't find any version information", None)
 
@@ -200,10 +247,10 @@ def check_repomanifest(app, branch=None):
     try:
 
         if app.RepoType == 'srclib':
-            build_dir = os.path.join('build', 'srclib', app.Repo)
+            build_dir = Path('build/srclib') / app.Repo
             repotype = common.getsrclibvcs(app.Repo)
         else:
-            build_dir = os.path.join('build', app.id)
+            build_dir = Path('build') / app.id
             repotype = app.RepoType
 
         # Set up vcs interface and make sure we have the latest code...
@@ -221,8 +268,8 @@ def check_repomanifest(app, branch=None):
             vcs.gotorevision(None)
 
         last_build = metadata.Build()
-        if len(app.builds) > 0:
-            last_build = app.builds[-1]
+        if app.get('Builds', []):
+            last_build = app.get('Builds', [])[-1]
 
         try_init_submodules(app, last_build, vcs)
 
@@ -230,18 +277,16 @@ def check_repomanifest(app, branch=None):
         hver = None
         hcode = "0"
         for subdir in possible_subdirs(app):
-            if subdir == '.':
-                root_dir = build_dir
-            else:
-                root_dir = os.path.join(build_dir, subdir)
+            root_dir = build_dir / subdir
             paths = common.manifest_paths(root_dir, last_build.gradle)
             version, vercode, package = common.parse_androidmanifests(paths, app)
             if vercode:
                 logging.debug("Manifest exists in subdir '{0}'. Found version {1} ({2})"
                               .format(subdir, version, vercode))
-                if int(vercode) > int(hcode):
+                i_vercode = common.version_code_string_to_int(vercode)
+                if i_vercode > common.version_code_string_to_int(hcode):
                     hpak = package
-                    hcode = str(int(vercode))
+                    hcode = str(i_vercode)
                     hver = version
 
         if not hpak:
@@ -262,10 +307,10 @@ def check_repotrunk(app):
 
     try:
         if app.RepoType == 'srclib':
-            build_dir = os.path.join('build', 'srclib', app.Repo)
+            build_dir = Path('build/srclib') / app.Repo
             repotype = common.getsrclibvcs(app.Repo)
         else:
-            build_dir = os.path.join('build', app.id)
+            build_dir = Path('build') / app.id
             repotype = app.RepoType
 
         if repotype not in ('git-svn', ):
@@ -318,6 +363,7 @@ def check_gplay(app):
 
 def try_init_submodules(app, last_build, vcs):
     """Try to init submodules if the last build entry used them.
+
     They might have been removed from the app's repo in the meantime,
     so if we can't find any submodules we continue with the updates check.
     If there is any other error in initializing them then we stop the check.
@@ -326,16 +372,19 @@ def try_init_submodules(app, last_build, vcs):
         try:
             vcs.initsubmodules()
         except NoSubmodulesException:
-            logging.info("No submodules present for {}".format(app.Name))
+            logging.info("No submodules present for {}".format(_getappname(app)))
+        except VCSException:
+            logging.info("submodule broken for {}".format(_getappname(app)))
 
 
 # Return all directories under startdir that contain any of the manifest
 # files, and thus are probably an Android project.
 def dirs_with_manifest(startdir):
-    for root, dirs, files in os.walk(startdir):
+    # TODO: Python3.6: Accepts a path-like object.
+    for root, _dirs, files in os.walk(str(startdir)):
         if any(m in files for m in [
                 'AndroidManifest.xml', 'pom.xml', 'build.gradle', 'build.gradle.kts']):
-            yield root
+            yield Path(root)
 
 
 # Tries to find a new subdir starting from the root build_dir. Returns said
@@ -343,9 +392,9 @@ def dirs_with_manifest(startdir):
 def possible_subdirs(app):
 
     if app.RepoType == 'srclib':
-        build_dir = os.path.join('build', 'srclib', app.Repo)
+        build_dir = Path('build/srclib') / app.Repo
     else:
-        build_dir = os.path.join('build', app.id)
+        build_dir = Path('build') / app.id
 
     last_build = app.get_last_build()
 
@@ -353,17 +402,13 @@ def possible_subdirs(app):
         m_paths = common.manifest_paths(d, last_build.gradle)
         package = common.parse_androidmanifests(m_paths, app)[2]
         if package is not None:
-            subdir = os.path.relpath(d, build_dir)
+            subdir = d.relative_to(build_dir)
             logging.debug("Adding possible subdir %s" % subdir)
             yield subdir
 
 
 def _getappname(app):
-    if app.Name:
-        return app.Name
-    if app.AutoName:
-        return app.AutoName
-    return app.id
+    return common.get_app_display_name(app)
 
 
 def _getcvname(app):
@@ -377,9 +422,9 @@ def fetch_autoname(app, tag):
         return None
 
     if app.RepoType == 'srclib':
-        build_dir = os.path.join('build', 'srclib', app.Repo)
+        build_dir = Path('build/srclib') / app.Repo
     else:
-        build_dir = os.path.join('build', app.id)
+        build_dir = Path('build') / app.id
 
     try:
         vcs = common.getvcs(app.RepoType, app.Repo, build_dir)
@@ -389,13 +434,10 @@ def fetch_autoname(app, tag):
 
     last_build = app.get_last_build()
 
-    logging.debug("...fetch auto name from " + build_dir)
+    logging.debug("...fetch auto name from " + str(build_dir))
     new_name = None
     for subdir in possible_subdirs(app):
-        if subdir == '.':
-            root_dir = build_dir
-        else:
-            root_dir = os.path.join(build_dir, subdir)
+        root_dir = build_dir / subdir
         new_name = common.fetch_real_name(root_dir, last_build.gradle)
         if new_name is not None:
             break
@@ -426,8 +468,6 @@ def checkupdates_app(app):
     if mode.startswith('Tags'):
         pattern = mode[5:] if len(mode) > 4 else None
         (version, vercode, tag) = check_tags(app, pattern)
-        if version == 'Unknown':
-            version = tag
         msg = vercode
     elif mode == 'RepoManifest':
         (version, vercode) = check_repomanifest(app)
@@ -474,12 +514,16 @@ def checkupdates_app(app):
             logging.warning(logmsg)
     elif vercode == app.CurrentVersionCode:
         logging.info("...up to date")
-    else:
+    elif int(vercode) > int(app.CurrentVersionCode):
         logging.debug("...updating - old vercode={0}, new vercode={1}".format(
             app.CurrentVersionCode, vercode))
         app.CurrentVersion = version
         app.CurrentVersionCode = str(int(vercode))
         updating = True
+    else:
+        logging.info("Refusing to auto update, since the current version is newer")
+        logging.debug("...old vercode={0}, new vercode={1}".format(
+            app.CurrentVersionCode, vercode))
 
     commitmsg = fetch_autoname(app, tag)
 
@@ -495,7 +539,7 @@ def checkupdates_app(app):
             logging.warning("Can't auto-update app with no CurrentVersionCode: " + app.id)
         elif mode in ('None', 'Static'):
             pass
-        elif mode.startswith('Version '):
+        elif mode.startswith('Version'):
             pattern = mode[8:]
             suffix = ''
             if pattern.startswith('+'):
@@ -506,7 +550,7 @@ def checkupdates_app(app):
 
             gotcur = False
             latest = None
-            for build in app.builds:
+            for build in app.get('Builds', []):
                 if int(build.versionCode) >= int(app.CurrentVersionCode):
                     gotcur = True
                 if not latest or int(build.versionCode) > int(latest.versionCode):
@@ -521,10 +565,14 @@ def checkupdates_app(app):
                 newbuild.versionCode = app.CurrentVersionCode
                 newbuild.versionName = app.CurrentVersion + suffix.replace('%c', newbuild.versionCode)
                 logging.info("...auto-generating build for " + newbuild.versionName)
-                commit = pattern.replace('%v', app.CurrentVersion)
-                commit = commit.replace('%c', newbuild.versionCode)
-                newbuild.commit = commit
-                app.builds.append(newbuild)
+                if tag:
+                    newbuild.commit = tag
+                else:
+                    commit = pattern.replace('%v', app.CurrentVersion)
+                    commit = commit.replace('%c', newbuild.versionCode)
+                    newbuild.commit = commit
+
+                app['Builds'].append(newbuild)
                 name = _getappname(app)
                 ver = _getcvname(app)
                 commitmsg = "Update %s to %s" % (name, ver)
@@ -544,8 +592,7 @@ def checkupdates_app(app):
 
 
 def status_update_json(processed, failed):
-    """Output a JSON file with metadata about this run"""
-
+    """Output a JSON file with metadata about this run."""
     logging.debug(_('Outputting JSON'))
     output = common.setup_status_output(start_timestamp)
     if processed:

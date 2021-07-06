@@ -3,6 +3,7 @@
 # publish.py - part of the FDroid server tools
 # Copyright (C) 2010-13, Ciaran Gultnieks, ciaran@ciarang.com
 # Copyright (C) 2013-2014 Daniel Martí <mvdan@mvdan.cc>
+# Copyright (C) 2021 Felix C. Stegerman <flx@obfusk.net>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -44,7 +45,6 @@ start_timestamp = time.gmtime()
 
 def publish_source_tarball(apkfilename, unsigned_dir, output_dir):
     """Move the source tarball into the output directory..."""
-
     tarfilename = apkfilename[:-4] + '_src.tar.gz'
     tarfile = os.path.join(unsigned_dir, tarfilename)
     if os.path.exists(tarfile):
@@ -55,7 +55,9 @@ def publish_source_tarball(apkfilename, unsigned_dir, output_dir):
 
 
 def key_alias(appid):
-    """Get the alias which F-Droid uses to indentify the singing key
+    """No summary.
+
+    Get the alias which F-Droid uses to indentify the singing key
     for this App in F-Droids keystore.
     """
     if config and 'keyaliases' in config and appid in config['keyaliases']:
@@ -73,24 +75,27 @@ def key_alias(appid):
 
 
 def read_fingerprints_from_keystore():
-    """Obtain a dictionary containing all singning-key fingerprints which
-    are managed by F-Droid, grouped by appid.
-    """
-    env_vars = {'LC_ALL': 'C.UTF-8',
-                'FDROID_KEY_STORE_PASS': config['keystorepass']}
-    cmd = [config['keytool'], '-list',
-           '-v', '-keystore', config['keystore'],
-           '-storepass:env', 'FDROID_KEY_STORE_PASS']
+    """Obtain a dictionary containing all singning-key fingerprints which are managed by F-Droid, grouped by appid."""
+    env_vars = {'LC_ALL': 'C.UTF-8', 'FDROID_KEY_STORE_PASS': config['keystorepass']}
+    cmd = [
+        config['keytool'],
+        '-list',
+        '-v',
+        '-keystore',
+        config['keystore'],
+        '-storepass:env',
+        'FDROID_KEY_STORE_PASS',
+    ]
     if config['keystore'] == 'NONE':
         cmd += config['smartcardoptions']
     p = FDroidPopen(cmd, envs=env_vars, output=False)
     if p.returncode != 0:
         raise FDroidException('could not read keystore {}'.format(config['keystore']))
 
-    realias = re.compile('Alias name: (?P<alias>.+)\n')
-    resha256 = re.compile(r'\s+SHA256: (?P<sha256>[:0-9A-F]{95})\n')
+    realias = re.compile('Alias name: (?P<alias>.+)' + os.linesep)
+    resha256 = re.compile(r'\s+SHA256: (?P<sha256>[:0-9A-F]{95})' + os.linesep)
     fps = {}
-    for block in p.output.split(('*' * 43) + '\n' + '*' * 43):
+    for block in p.output.split(('*' * 43) + os.linesep + '*' * 43):
         s_alias = realias.search(block)
         s_sha256 = resha256.search(block)
         if s_alias and s_sha256:
@@ -100,8 +105,9 @@ def read_fingerprints_from_keystore():
 
 
 def sign_sig_key_fingerprint_list(jar_file):
-    """sign the list of app-signing key fingerprints which is
-    used primaryily by fdroid update to determine which APKs
+    """Sign the list of app-signing key fingerprints.
+
+    This is used primaryily by fdroid update to determine which APKs
     where built and signed by F-Droid and which ones were
     manually added by users.
     """
@@ -115,8 +121,10 @@ def sign_sig_key_fingerprint_list(jar_file):
         cmd += config['smartcardoptions']
     else:  # smardcards never use -keypass
         cmd += '-keypass:env', 'FDROID_KEY_PASS'
-    env_vars = {'FDROID_KEY_STORE_PASS': config['keystorepass'],
-                'FDROID_KEY_PASS': config.get('keypass', "")}
+    env_vars = {
+        'FDROID_KEY_STORE_PASS': config['keystorepass'],
+        'FDROID_KEY_PASS': config.get('keypass', ""),
+    }
     p = common.FDroidPopen(cmd, envs=env_vars)
     if p.returncode != 0:
         raise FDroidException("Failed to sign '{}'!".format(jar_file))
@@ -124,6 +132,7 @@ def sign_sig_key_fingerprint_list(jar_file):
 
 def store_stats_fdroid_signing_key_fingerprints(appids, indent=None):
     """Store list of all signing-key fingerprints for given appids to HD.
+
     This list will later on be needed by fdroid update.
     """
     if not os.path.exists('stats'):
@@ -142,10 +151,12 @@ def store_stats_fdroid_signing_key_fingerprints(appids, indent=None):
 
 
 def status_update_json(generatedKeys, signedApks):
-    """Output a JSON file with metadata about this run"""
-
+    """Output a JSON file with metadata about this run."""
     logging.debug(_('Outputting JSON'))
     output = common.setup_status_output(start_timestamp)
+    output['apksigner'] = shutil.which(config.get('apksigner', ''))
+    output['jarsigner'] = shutil.which(config.get('jarsigner', ''))
+    output['keytool'] = shutil.which(config.get('keytool', ''))
     if generatedKeys:
         output['generatedKeys'] = generatedKeys
     if signedApks:
@@ -154,8 +165,8 @@ def status_update_json(generatedKeys, signedApks):
 
 
 def check_for_key_collisions(allapps):
-    """
-    Make sure there's no collision in keyaliases from apps.
+    """Make sure there's no collision in keyaliases from apps.
+
     It was suggested at
     https://dev.guardianproject.info/projects/bazaar/wiki/FDroid_Audit
     that a package could be crafted, such that it would use the same signing
@@ -164,9 +175,16 @@ def check_for_key_collisions(allapps):
     the colliding ID would be something that would be a) a valid package ID,
     and b) a sane-looking ID that would make its way into the repo.
     Nonetheless, to be sure, before publishing we check that there are no
-    collisions, and refuse to do any publishing if that's the case...
-    :param allapps a dict of all apps to process
-    :return: a list of all aliases corresponding to allapps
+    collisions, and refuse to do any publishing if that's the case.
+
+    Parameters
+    ----------
+    allapps
+      a dict of all apps to process
+
+    Returns
+    -------
+    a list of all aliases corresponding to allapps
     """
     allaliases = []
     for appid in allapps:
@@ -181,30 +199,53 @@ def check_for_key_collisions(allapps):
 
 
 def create_key_if_not_existing(keyalias):
-    """
-    Ensures a signing key with the given keyalias exists
-    :return: boolean, True if a new key was created, false otherwise
+    """Ensure a signing key with the given keyalias exists.
+
+    Returns
+    -------
+    boolean
+      True if a new key was created, False otherwise
     """
     # See if we already have a key for this application, and
     # if not generate one...
-    env_vars = {'LC_ALL': 'C.UTF-8',
-                'FDROID_KEY_STORE_PASS': config['keystorepass'],
-                'FDROID_KEY_PASS': config.get('keypass', "")}
-    cmd = [config['keytool'], '-list',
-           '-alias', keyalias, '-keystore', config['keystore'],
-           '-storepass:env', 'FDROID_KEY_STORE_PASS']
+    env_vars = {
+        'LC_ALL': 'C.UTF-8',
+        'FDROID_KEY_STORE_PASS': config['keystorepass'],
+        'FDROID_KEY_PASS': config.get('keypass', ""),
+    }
+    cmd = [
+        config['keytool'],
+        '-list',
+        '-alias',
+        keyalias,
+        '-keystore',
+        config['keystore'],
+        '-storepass:env',
+        'FDROID_KEY_STORE_PASS',
+    ]
     if config['keystore'] == 'NONE':
         cmd += config['smartcardoptions']
     p = FDroidPopen(cmd, envs=env_vars)
     if p.returncode != 0:
         logging.info("Key does not exist - generating...")
-        cmd = [config['keytool'], '-genkey',
-               '-keystore', config['keystore'],
-               '-alias', keyalias,
-               '-keyalg', 'RSA', '-keysize', '2048',
-               '-validity', '10000',
-               '-storepass:env', 'FDROID_KEY_STORE_PASS',
-               '-dname', config['keydname']]
+        cmd = [
+            config['keytool'],
+            '-genkey',
+            '-keystore',
+            config['keystore'],
+            '-alias',
+            keyalias,
+            '-keyalg',
+            'RSA',
+            '-keysize',
+            '2048',
+            '-validity',
+            '10000',
+            '-storepass:env',
+            'FDROID_KEY_STORE_PASS',
+            '-dname',
+            config['keydname'],
+        ]
         if config['keystore'] == 'NONE':
             cmd += config['smartcardoptions']
         else:
@@ -221,11 +262,15 @@ def main():
     global config, options
 
     # Parse command line...
-    parser = ArgumentParser(usage="%(prog)s [options] "
-                                  "[APPID[:VERCODE] [APPID[:VERCODE] ...]]")
+    parser = ArgumentParser(
+        usage="%(prog)s [options] " "[APPID[:VERCODE] [APPID[:VERCODE] ...]]"
+    )
     common.setup_global_opts(parser)
-    parser.add_argument("appid", nargs='*',
-                        help=_("application ID with optional versionCode in the form APPID[:VERCODE]"))
+    parser.add_argument(
+        "appid",
+        nargs='*',
+        help=_("application ID with optional versionCode in the form APPID[:VERCODE]"),
+    )
     metadata.add_metadata_arguments(parser)
     options = parser.parse_args()
     metadata.warnings_action = options.W
@@ -233,7 +278,9 @@ def main():
     config = common.read_config(options)
 
     if not ('jarsigner' in config and 'keytool' in config):
-        logging.critical(_('Java JDK not found! Install in standard location or set java_paths!'))
+        logging.critical(
+            _('Java JDK not found! Install in standard location or set java_paths!')
+        )
         sys.exit(1)
 
     common.assert_config_keystore(config)
@@ -265,15 +312,21 @@ def main():
 
     allapps = metadata.read_metadata()
     vercodes = common.read_pkg_args(options.appid, True)
+    common.get_metadata_files(vercodes)  # only check appids
     signed_apks = dict()
     generated_keys = dict()
     allaliases = check_for_key_collisions(allapps)
-    logging.info(ngettext('{0} app, {1} key aliases',
-                          '{0} apps, {1} key aliases', len(allapps)).format(len(allapps), len(allaliases)))
+    logging.info(
+        ngettext(
+            '{0} app, {1} key aliases', '{0} apps, {1} key aliases', len(allapps)
+        ).format(len(allapps), len(allaliases))
+    )
 
     # Process any APKs or ZIPs that are waiting to be signed...
-    for apkfile in sorted(glob.glob(os.path.join(unsigned_dir, '*.apk'))
-                          + glob.glob(os.path.join(unsigned_dir, '*.zip'))):
+    for apkfile in sorted(
+        glob.glob(os.path.join(unsigned_dir, '*.apk'))
+        + glob.glob(os.path.join(unsigned_dir, '*.zip'))
+    ):
 
         appid, vercode = common.publishednameinfo(apkfile)
         apkfilename = os.path.basename(apkfile)
@@ -287,8 +340,9 @@ def main():
         # There ought to be valid metadata for this app, otherwise why are we
         # trying to publish it?
         if appid not in allapps:
-            logging.error("Unexpected {0} found in unsigned directory"
-                          .format(apkfilename))
+            logging.error(
+                "Unexpected {0} found in unsigned directory".format(apkfilename)
+            )
             sys.exit(1)
         app = allapps[appid]
 
@@ -341,16 +395,16 @@ def main():
                 # metadata. This means we're going to prepare both a locally
                 # signed APK and a version signed with the developers key.
 
-                signaturefile, signedfile, manifest = signingfiles
+                signature_file, _ignored, manifest, v2_files = signingfiles
 
-                with open(signaturefile, 'rb') as f:
-                    devfp = common.signer_fingerprint_short(common.get_certificate(f.read()))
+                with open(signature_file, 'rb') as f:
+                    devfp = common.signer_fingerprint_short(
+                        common.get_certificate(f.read())
+                    )
                 devsigned = '{}_{}_{}.apk'.format(appid, vercode, devfp)
                 devsignedtmp = os.path.join(tmp_dir, devsigned)
-                shutil.copy(apkfile, devsignedtmp)
 
-                common.apk_implant_signatures(devsignedtmp, signaturefile,
-                                              signedfile, manifest)
+                common.apk_implant_signatures(apkfile, devsignedtmp, manifest=manifest)
                 if common.verify_apk_signature(devsignedtmp):
                     shutil.move(devsignedtmp, os.path.join(output_dir, devsigned))
                 else:
@@ -377,8 +431,7 @@ def main():
                 common.sign_apk(apkfile, signed_apk_path, keyalias)
                 if appid not in signed_apks:
                     signed_apks[appid] = []
-                signed_apks[appid].append({"keyalias": keyalias,
-                                           "filename": apkfile})
+                signed_apks[appid].append({"keyalias": keyalias, "filename": apkfile})
 
                 publish_source_tarball(apkfilename, unsigned_dir, output_dir)
                 logging.info('Published ' + apkfilename)

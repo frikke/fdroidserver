@@ -18,13 +18,11 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import os
+import git
+from pathlib import Path
+import platform
 import re
-import glob
-import html
 import logging
-import textwrap
-import io
 import yaml
 try:
     from yaml import CSafeLoader as SafeLoader
@@ -33,9 +31,9 @@ except ImportError:
 import importlib
 from collections import OrderedDict
 
-import fdroidserver.common
-from fdroidserver import _
-from fdroidserver.exception import MetaDataException, FDroidException
+from . import common
+from . import _
+from .exception import MetaDataException, FDroidException
 
 srclibs = None
 warnings_action = None
@@ -46,7 +44,7 @@ VALID_USERNAME_REGEX = re.compile(r'^[a-z\d](?:[a-z\d/._-]){0,38}$', re.IGNORECA
 
 
 def _warn_or_exception(value, cause=None):
-    '''output warning or Exception depending on -W'''
+    """Output warning or Exception depending on -W."""
     if warnings_action == 'ignore':
         pass
     elif warnings_action == 'error':
@@ -161,7 +159,7 @@ class App(dict):
 
         self.id = None
         self.metadatapath = None
-        self.builds = []
+        self.Builds = []
         self.comments = {}
         self.added = None
         self.lastUpdated = None
@@ -182,8 +180,8 @@ class App(dict):
             raise AttributeError("No such attribute: " + name)
 
     def get_last_build(self):
-        if len(self.builds) > 0:
-            return self.builds[-1]
+        if len(self.Builds) > 0:
+            return self.Builds[-1]
         else:
             return Build()
 
@@ -328,13 +326,11 @@ class Build(dict):
         return 'ant'
 
     def ndk_path(self):
-        version = self.ndk
-        if not version:
-            version = 'r12b'  # falls back to latest
-        paths = fdroidserver.common.config['ndk_paths']
-        if version not in paths:
-            return ''
-        return paths[version]
+        """Return the path to the first configured NDK or an empty string."""
+        ndk = self.ndk
+        if isinstance(ndk, list):
+            ndk = self.ndk[0]
+        return common.config['ndk_paths'].get(ndk, '')
 
 
 flagtypes = {
@@ -372,8 +368,7 @@ def flagtype(name):
 
 
 class FieldValidator():
-    """
-    Designates App metadata field types and checks that it matches
+    """Designate App metadata field types and checks that it matches.
 
     'name'     - The long name of the field type
     'matching' - List of possible values or regex expression
@@ -451,7 +446,7 @@ valuetypes = {
                    ["AntiFeatures"]),
 
     FieldValidator("Auto Update Mode",
-                   r"^(Version .+|None)$",
+                   r"^(Version.*|None)$",
                    ["AutoUpdateMode"]),
 
     FieldValidator("Update Check Mode",
@@ -467,196 +462,6 @@ def check_metadata(app):
             v.check(app[k], app.id)
 
 
-# Formatter for descriptions. Create an instance, and call parseline() with
-# each line of the description source from the metadata. At the end, call
-# end() and then text_txt and text_html will contain the result.
-class DescriptionFormatter:
-
-    stNONE = 0
-    stPARA = 1
-    stUL = 2
-    stOL = 3
-
-    def __init__(self, linkres):
-        self.bold = False
-        self.ital = False
-        self.state = self.stNONE
-        self.laststate = self.stNONE
-        self.text_html = ''
-        self.text_txt = ''
-        self.html = io.StringIO()
-        self.text = io.StringIO()
-        self.para_lines = []
-        self.linkResolver = None
-        self.linkResolver = linkres
-
-    def endcur(self, notstates=None):
-        if notstates and self.state in notstates:
-            return
-        if self.state == self.stPARA:
-            self.endpara()
-        elif self.state == self.stUL:
-            self.endul()
-        elif self.state == self.stOL:
-            self.endol()
-
-    def endpara(self):
-        self.laststate = self.state
-        self.state = self.stNONE
-        whole_para = ' '.join(self.para_lines)
-        self.addtext(whole_para)
-        wrapped = textwrap.fill(whole_para, 80,
-                                break_long_words=False,
-                                break_on_hyphens=False)
-        self.text.write(wrapped)
-        self.html.write('</p>')
-        del self.para_lines[:]
-
-    def endul(self):
-        self.html.write('</ul>')
-        self.laststate = self.state
-        self.state = self.stNONE
-
-    def endol(self):
-        self.html.write('</ol>')
-        self.laststate = self.state
-        self.state = self.stNONE
-
-    def formatted(self, txt, htmlbody):
-        res = ''
-        if htmlbody:
-            txt = html.escape(txt, quote=False)
-        while True:
-            index = txt.find("''")
-            if index == -1:
-                return res + txt
-            res += txt[:index]
-            txt = txt[index:]
-            if txt.startswith("'''"):
-                if htmlbody:
-                    if self.bold:
-                        res += '</b>'
-                    else:
-                        res += '<b>'
-                self.bold = not self.bold
-                txt = txt[3:]
-            else:
-                if htmlbody:
-                    if self.ital:
-                        res += '</i>'
-                    else:
-                        res += '<i>'
-                self.ital = not self.ital
-                txt = txt[2:]
-
-    def linkify(self, txt):
-        res_plain = ''
-        res_html = ''
-        while True:
-            index = txt.find("[")
-            if index == -1:
-                return (res_plain + self.formatted(txt, False), res_html + self.formatted(txt, True))
-            res_plain += self.formatted(txt[:index], False)
-            res_html += self.formatted(txt[:index], True)
-            txt = txt[index:]
-            if txt.startswith("[["):
-                index = txt.find("]]")
-                if index == -1:
-                    _warn_or_exception(_("Unterminated ]]"))
-                url = txt[2:index]
-                if self.linkResolver:
-                    url, urltext = self.linkResolver.resolve_description_link(url)
-                else:
-                    urltext = url
-                res_html += '<a href="' + url + '">' + html.escape(urltext, quote=False) + '</a>'
-                res_plain += urltext
-                txt = txt[index + 2:]
-            else:
-                index = txt.find("]")
-                if index == -1:
-                    _warn_or_exception(_("Unterminated ]"))
-                url = txt[1:index]
-                index2 = url.find(' ')
-                if index2 == -1:
-                    urltxt = url
-                else:
-                    urltxt = url[index2 + 1:]
-                    url = url[:index2]
-                    if url == urltxt:
-                        _warn_or_exception(_("URL title is just the URL, use brackets: [URL]"))
-                res_html += '<a href="' + url + '">' + html.escape(urltxt, quote=False) + '</a>'
-                res_plain += urltxt
-                if urltxt != url:
-                    res_plain += ' (' + url + ')'
-                txt = txt[index + 1:]
-
-    def addtext(self, txt):
-        p, h = self.linkify(txt)
-        self.html.write(h)
-
-    def parseline(self, line):
-        if not line:
-            self.endcur()
-        elif line.startswith('* '):
-            self.endcur([self.stUL])
-            if self.state != self.stUL:
-                self.html.write('<ul>')
-                self.state = self.stUL
-                if self.laststate != self.stNONE:
-                    self.text.write('\n\n')
-            else:
-                self.text.write('\n')
-            self.text.write(line)
-            self.html.write('<li>')
-            self.addtext(line[1:])
-            self.html.write('</li>')
-        elif line.startswith('# '):
-            self.endcur([self.stOL])
-            if self.state != self.stOL:
-                self.html.write('<ol>')
-                self.state = self.stOL
-                if self.laststate != self.stNONE:
-                    self.text.write('\n\n')
-            else:
-                self.text.write('\n')
-            self.text.write(line)
-            self.html.write('<li>')
-            self.addtext(line[1:])
-            self.html.write('</li>')
-        else:
-            self.para_lines.append(line)
-            self.endcur([self.stPARA])
-            if self.state == self.stNONE:
-                self.state = self.stPARA
-                if self.laststate != self.stNONE:
-                    self.text.write('\n\n')
-                self.html.write('<p>')
-
-    def end(self):
-        self.endcur()
-        self.text_txt = self.text.getvalue()
-        self.text_html = self.html.getvalue()
-        self.text.close()
-        self.html.close()
-
-
-# Parse multiple lines of description as written in a metadata file, returning
-# a single string in wiki format. Used for the Maintainer Notes field as well,
-# because it's the same format.
-def description_wiki(s):
-    return s
-
-
-# Parse multiple lines of description as written in a metadata file, returning
-# a single string in HTML format.
-def description_html(s, linkres):
-    ps = DescriptionFormatter(linkres)
-    for line in s.splitlines():
-        ps.parseline(line)
-    ps.end()
-    return ps.text_html
-
-
 def parse_yaml_srclib(metadatapath):
 
     thisinfo = {'RepoType': '',
@@ -664,15 +469,22 @@ def parse_yaml_srclib(metadatapath):
                 'Subdir': None,
                 'Prepare': None}
 
-    if not os.path.exists(metadatapath):
+    if not metadatapath.exists():
         _warn_or_exception(_("Invalid scrlib metadata: '{file}' "
                              "does not exist"
                              .format(file=metadatapath)))
         return thisinfo
 
-    with open(metadatapath, "r", encoding="utf-8") as f:
+    with metadatapath.open("r", encoding="utf-8") as f:
         try:
             data = yaml.load(f, Loader=SafeLoader)
+            if type(data) is not dict:
+                if platform.system() == 'Windows':
+                    # Handle symlink on Windows
+                    symlink = metadatapath.parent / metadatapath.read_text(encoding='utf-8')
+                    if symlink.is_file():
+                        with symlink.open("r", encoding="utf-8") as s:
+                            data = yaml.load(s, Loader=SafeLoader)
             if type(data) is not dict:
                 raise yaml.error.YAMLError(_('{file} is blank or corrupt!')
                                            .format(file=metadatapath))
@@ -680,8 +492,7 @@ def parse_yaml_srclib(metadatapath):
             _warn_or_exception(_("Invalid srclib metadata: could not "
                                  "parse '{file}'")
                                .format(file=metadatapath) + '\n'
-                               + fdroidserver.common.run_yamllint(metadatapath,
-                                                                  indent=4),
+                               + common.run_yamllint(metadatapath, indent=4),
                                cause=e)
             return thisinfo
 
@@ -725,27 +536,24 @@ def read_srclibs():
 
     srclibs = {}
 
-    srcdir = 'srclibs'
-    if not os.path.exists(srcdir):
-        os.makedirs(srcdir)
+    srcdir = Path('srclibs')
+    srcdir.mkdir(exist_ok=True)
 
-    for metadatapath in sorted(glob.glob(os.path.join(srcdir, '*.yml'))):
-        srclibname = os.path.basename(metadatapath[:-4])
-        srclibs[srclibname] = parse_yaml_srclib(metadatapath)
+    for metadatapath in sorted(srcdir.glob('*.yml')):
+        srclibs[metadatapath.stem] = parse_yaml_srclib(metadatapath)
 
 
-def read_metadata(xref=True, check_vcs=[], refresh=True, sort_by_time=False):
-    """Return a list of App instances sorted newest first
+def read_metadata(appids={}, sort_by_time=False):
+    """Return a list of App instances sorted newest first.
 
     This reads all of the metadata files in a 'data' repository, then
     builds a list of App instances from those files.  The list is
     sorted based on creation time, newest first.  Most of the time,
     the newer files are the most interesting.
 
-    check_vcs is the list of appids to check for .fdroid.yml in source
+    appids is a dict with appids a keys and versionCodes as values.
 
     """
-
     # Always read the srclibs before the apps, since they can use a srlib as
     # their source repository.
     read_srclibs()
@@ -753,14 +561,17 @@ def read_metadata(xref=True, check_vcs=[], refresh=True, sort_by_time=False):
     apps = OrderedDict()
 
     for basedir in ('metadata', 'tmp'):
-        if not os.path.exists(basedir):
-            os.makedirs(basedir)
+        Path(basedir).mkdir(exist_ok=True)
 
-    metadatafiles = (glob.glob(os.path.join('metadata', '*.yml'))
-                     + glob.glob('.fdroid.yml'))
+    if appids:
+        vercodes = common.read_pkg_args(appids)
+        metadatafiles = common.get_metadata_files(vercodes)
+    else:
+        metadatafiles = list(Path('metadata').glob('*.yml')) + list(
+            Path('.').glob('.fdroid.yml'))
 
     if sort_by_time:
-        entries = ((os.stat(path).st_mtime, path) for path in metadatafiles)
+        entries = ((path.stat().st_mtime, path) for path in metadatafiles)
         metadatafiles = []
         for _ignored, path in sorted(entries, reverse=True):
             metadatafiles.append(path)
@@ -769,26 +580,16 @@ def read_metadata(xref=True, check_vcs=[], refresh=True, sort_by_time=False):
         metadatafiles = sorted(metadatafiles)
 
     for metadatapath in metadatafiles:
-        appid, _ignored = fdroidserver.common.get_extension(os.path.basename(metadatapath))
-        if appid != '.fdroid' and not fdroidserver.common.is_valid_package_name(appid):
+        appid = metadatapath.stem
+        if appid != '.fdroid' and not common.is_valid_package_name(appid):
             _warn_or_exception(_("{appid} from {path} is not a valid Java Package Name!")
                                .format(appid=appid, path=metadatapath))
         if appid in apps:
             _warn_or_exception(_("Found multiple metadata files for {appid}")
                                .format(appid=appid))
-        app = parse_metadata(metadatapath, appid in check_vcs, refresh)
+        app = parse_metadata(metadatapath)
         check_metadata(app)
         apps[app.id] = app
-
-    if xref:
-        # Parse all descriptions at load time, just to ensure cross-referencing
-        # errors are caught early rather than when they hit the build server.
-        for appid, app in apps.items():
-            try:
-                description_html(app.Description, DummyDescriptionResolver(apps))
-            except MetaDataException as e:
-                _warn_or_exception(_("Problem with description of {appid}: {error}")
-                                   .format(appid=appid, error=str(e)))
 
     return apps
 
@@ -822,9 +623,6 @@ def post_metadata_parse(app):
         if type(v) in (float, int):
             app[k] = str(v)
 
-    if 'Builds' in app:
-        app['builds'] = app.pop('Builds')
-
     if 'flavours' in app and app['flavours'] == [True]:
         app['flavours'] = 'yes'
 
@@ -853,8 +651,8 @@ def post_metadata_parse(app):
     _bool_allowed = ('maven', 'buildozer')
 
     builds = []
-    if 'builds' in app:
-        for build in app['builds']:
+    if 'Builds' in app:
+        for build in app.get('Builds', []):
             if not isinstance(build, Build):
                 build = Build(build)
             for k, v in build.items():
@@ -882,12 +680,12 @@ def post_metadata_parse(app):
                                 build[k] = str(v)
             builds.append(build)
 
-    app.builds = sorted_builds(builds)
+    app['Builds'] = sorted_builds(builds)
 
 
 # Parse metadata for a single application.
 #
-#  'metadatapath' - the filename to read. The "Application ID" aka
+#  'metadatapath' - the file path to read. The "Application ID" aka
 #               "Package Name" for the application comes from this
 #               filename. Pass None to get a blank entry.
 #
@@ -899,8 +697,6 @@ def post_metadata_parse(app):
 #
 # Known keys not originating from the metadata are:
 #
-#  'builds'           - a list of dictionaries containing build information
-#                       for each defined build
 #  'comments'         - a list of comments from the metadata file. Each is
 #                       a list of the form [field, comment] where field is
 #                       the name of the field it preceded in the metadata
@@ -924,34 +720,40 @@ def _decode_bool(s):
     _warn_or_exception(_("Invalid boolean '%s'") % s)
 
 
-def parse_metadata(metadatapath, check_vcs=False, refresh=True):
-    '''parse metadata file, optionally checking the git repo for metadata first'''
+def parse_metadata(metadatapath):
+    """Parse metadata file, also checking the source repo for .fdroid.yml.
 
+    If this is a metadata file from fdroiddata, it will first load the
+    source repo type and URL from fdroiddata, then read .fdroid.yml if
+    it exists, then include the rest of the metadata as specified in
+    fdroiddata, so that fdroiddata has precedence over the metadata in
+    the source code.
+
+    """
+    metadatapath = Path(metadatapath)
     app = App()
-    app.metadatapath = metadatapath
-    name, _ignored = fdroidserver.common.get_extension(os.path.basename(metadatapath))
-    if name == '.fdroid':
-        check_vcs = False
-    else:
+    app.metadatapath = metadatapath.as_posix()
+    name = metadatapath.stem
+    if name != '.fdroid':
         app.id = name
 
-    if metadatapath.endswith('.yml'):
-        with open(metadatapath, 'r') as mf:
+    if metadatapath.suffix == '.yml':
+        with metadatapath.open('r', encoding='utf-8') as mf:
             parse_yaml_metadata(mf, app)
     else:
         _warn_or_exception(_('Unknown metadata format: {path} (use: *.yml)')
                            .format(path=metadatapath))
 
-    if check_vcs and app.Repo:
-        build_dir = fdroidserver.common.get_build_dir(app)
-        metadata_in_repo = os.path.join(build_dir, '.fdroid.yml')
-        if not os.path.isfile(metadata_in_repo):
-            vcs, build_dir = fdroidserver.common.setup_vcs(app)
-            if isinstance(vcs, fdroidserver.common.vcs_git):
-                vcs.gotorevision('HEAD', refresh)  # HEAD since we can't know where else to go
-        if os.path.isfile(metadata_in_repo):
-            logging.debug('Including metadata from ' + metadata_in_repo)
-            # do not include fields already provided by main metadata file
+    if metadatapath.name != '.fdroid.yml' and app.Repo:
+        build_dir = common.get_build_dir(app)
+        metadata_in_repo = build_dir / '.fdroid.yml'
+        if metadata_in_repo.is_file():
+            try:
+                # TODO: Python3.6: Should accept path-like
+                commit_id = common.get_head_commit_id(git.Repo(str(build_dir)))
+                logging.debug(_('Including metadata from %s@%s') % (metadata_in_repo, commit_id))
+            except git.exc.InvalidGitRepositoryError:
+                logging.debug(_('Including metadata from {path}').format(metadata_in_repo))
             app_in_repo = parse_metadata(metadata_in_repo)
             for k, v in app_in_repo.items():
                 if k not in app:
@@ -960,38 +762,49 @@ def parse_metadata(metadatapath, check_vcs=False, refresh=True):
     post_metadata_parse(app)
 
     if not app.id:
-        if app.builds:
-            build = app.builds[-1]
+        if app.get('Builds'):
+            build = app['Builds'][-1]
             if build.subdir:
-                root_dir = build.subdir
+                root_dir = Path(build.subdir)
             else:
-                root_dir = '.'
-            paths = fdroidserver.common.manifest_paths(root_dir, build.gradle)
-            _ignored, _ignored, app.id = fdroidserver.common.parse_androidmanifests(paths, app)
+                root_dir = Path('.')
+            paths = common.manifest_paths(root_dir, build.gradle)
+            _ignored, _ignored, app.id = common.parse_androidmanifests(paths, app)
 
     return app
 
 
 def parse_yaml_metadata(mf, app):
+    """Parse the .yml file and post-process it.
+
+    Clean metadata .yml files can be used directly, but in order to
+    make a better user experience for people editing .yml files, there
+    is post processing.  .fdroid.yml is embedded in the app's source
+    repo, so it is "user-generated".  That means that it can have
+    weird things in it that need to be removed so they don't break the
+    overall process.
+
+    """
     try:
         yamldata = yaml.load(mf, Loader=SafeLoader)
     except yaml.YAMLError as e:
         _warn_or_exception(_("could not parse '{path}'")
                            .format(path=mf.name) + '\n'
-                           + fdroidserver.common.run_yamllint(mf.name,
-                                                              indent=4),
+                           + common.run_yamllint(mf.name, indent=4),
                            cause=e)
 
     deprecated_in_yaml = ['Provides']
 
     if yamldata:
-        for field in yamldata:
-            if field not in yaml_app_fields:
-                if field not in deprecated_in_yaml:
-                    _warn_or_exception(_("Unrecognised app field "
-                                         "'{fieldname}' in '{path}'")
-                                       .format(fieldname=field,
-                                               path=mf.name))
+        for field in tuple(yamldata.keys()):
+            if field not in yaml_app_fields + deprecated_in_yaml:
+                msg = (_("Unrecognised app field '{fieldname}' in '{path}'")
+                       .format(fieldname=field, path=mf.name))
+                if Path(mf.name).name == '.fdroid.yml':
+                    logging.error(msg)
+                    del yamldata[field]
+                else:
+                    _warn_or_exception(msg)
 
         for deprecated_field in deprecated_in_yaml:
             if deprecated_field in yamldata:
@@ -1020,7 +833,7 @@ def parse_yaml_metadata(mf, app):
 
 
 def post_parse_yaml_metadata(yamldata):
-    """transform yaml metadata to our internal data format"""
+    """Transform yaml metadata to our internal data format."""
     for build in yamldata.get('Builds', []):
         for flag in build.keys():
             _flagtype = flagtype(flag)
@@ -1043,10 +856,13 @@ def post_parse_yaml_metadata(yamldata):
 def write_yaml(mf, app):
     """Write metadata in yaml format.
 
-    :param mf: active file discriptor for writing
-    :param app: app metadata to written to the yaml file
+    Parameters
+    ----------
+    mf
+      active file discriptor for writing
+    app
+      app metadata to written to the yaml file
     """
-
     # import rumael.yaml and check version
     try:
         import ruamel.yaml
@@ -1073,10 +889,6 @@ def write_yaml(mf, app):
     _yaml_bools_plus_lists.extend([[x] for x in _yaml_bools_true])
     _yaml_bools_plus_lists.extend(_yaml_bools_false)
     _yaml_bools_plus_lists.extend([[x] for x in _yaml_bools_false])
-
-    def _class_as_dict_representer(dumper, data):
-        '''Creates a YAML representation of a App/Build instance'''
-        return dumper.represent_dict(data)
 
     def _field_to_yaml(typ, value):
         if typ is TYPE_STRING:
@@ -1114,9 +926,8 @@ def write_yaml(mf, app):
                 insert_newline = True
             else:
                 if app.get(field) or field == 'Builds':
-                    # .txt called it 'builds' internally, everywhere else its 'Builds'
                     if field == 'Builds':
-                        if app.get('builds'):
+                        if app.get('Builds'):
                             cm.update({field: _builds_to_yaml(app)})
                     elif field == 'CurrentVersionCode':
                         cm.update({field: _field_to_yaml(TYPE_INT, getattr(app, field))})
@@ -1134,7 +945,9 @@ def write_yaml(mf, app):
 
     def _builds_to_yaml(app):
         builds = ruamel.yaml.comments.CommentedSeq()
-        for build in app.builds:
+        for build in app.get('Builds', []):
+            if not isinstance(build, Build):
+                build = Build(build)
             b = ruamel.yaml.comments.CommentedMap()
             for field in build_flags:
                 value = getattr(build, field)
@@ -1157,7 +970,9 @@ def write_yaml(mf, app):
         return builds
 
     yaml_app = _app_to_yaml(app)
-    ruamel.yaml.round_trip_dump(yaml_app, mf, indent=4, block_seq_indent=2)
+    yaml = ruamel.yaml.YAML()
+    yaml.indent(mapping=4, sequence=4, offset=2)
+    yaml.dump(yaml_app, stream=mf)
 
 
 build_line_sep = re.compile(r'(?<!\\),')
@@ -1165,9 +980,10 @@ build_cont = re.compile(r'^[ \t]')
 
 
 def write_metadata(metadatapath, app):
-    if metadatapath.endswith('.yml'):
+    metadatapath = Path(metadatapath)
+    if metadatapath.suffix == '.yml':
         if importlib.util.find_spec('ruamel.yaml'):
-            with open(metadatapath, 'w') as mf:
+            with metadatapath.open('w') as mf:
                 return write_yaml(mf, app)
         else:
             raise FDroidException(_('ruamel.yaml not installed, can not write metadata.'))
@@ -1176,26 +992,6 @@ def write_metadata(metadatapath, app):
 
 
 def add_metadata_arguments(parser):
-    '''add common command line flags related to metadata processing'''
+    """Add common command line flags related to metadata processing."""
     parser.add_argument("-W", choices=['error', 'warn', 'ignore'], default='error',
                         help=_("force metadata errors (default) to be warnings, or to be ignored."))
-
-
-class DescriptionResolver:
-    def __init__(self, apps):
-        self.apps = apps
-
-    def resolve_description_link(self, appid):
-        if appid in self.apps:
-            if self.apps[appid].Name:
-                return "fdroid.app:" + appid, self.apps[appid].Name
-        raise MetaDataException(_('Cannot resolve application ID {appid}')
-                                .format(appid=appid))
-
-
-class DummyDescriptionResolver(DescriptionResolver):
-    def resolve_description_link(self, appid):
-        if appid in self.apps:
-            return "fdroid.app:" + appid, "Dummy name - don't know yet"
-        _warn_or_exception(_('Cannot resolve application ID {appid}')
-                           .format(appid=appid))

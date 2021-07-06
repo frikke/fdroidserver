@@ -32,8 +32,7 @@ start_timestamp = time.gmtime()
 
 
 def sign_jar(jar):
-    """
-    Sign a JAR file with Java's jarsigner.
+    """Sign a JAR file with Java's jarsigner.
 
     This method requires a properly initialized config object.
 
@@ -42,10 +41,19 @@ def sign_jar(jar):
     but then Android < 4.3 would not be able to verify it.
     https://code.google.com/p/android/issues/detail?id=38321
     """
-    args = [config['jarsigner'], '-keystore', config['keystore'],
-            '-storepass:env', 'FDROID_KEY_STORE_PASS',
-            '-digestalg', 'SHA1', '-sigalg', 'SHA1withRSA',
-            jar, config['repo_keyalias']]
+    args = [
+        config['jarsigner'],
+        '-keystore',
+        config['keystore'],
+        '-storepass:env',
+        'FDROID_KEY_STORE_PASS',
+        '-digestalg',
+        'SHA1',
+        '-sigalg',
+        'SHA1withRSA',
+        jar,
+        config['repo_keyalias'],
+    ]
     if config['keystore'] == 'NONE':
         args += config['smartcardoptions']
     else:  # smardcards never use -keypass
@@ -60,8 +68,7 @@ def sign_jar(jar):
 
 
 def sign_index_v1(repodir, json_name):
-    """
-    Sign index-v1.json to make index-v1.jar
+    """Sign index-v1.json to make index-v1.jar.
 
     This is a bit different than index.jar: instead of their being index.xml
     and index_unsigned.jar, the presence of index-v1.json means that there is
@@ -78,8 +85,7 @@ def sign_index_v1(repodir, json_name):
 
 
 def status_update_json(signed):
-    """Output a JSON file with metadata about this run"""
-
+    """Output a JSON file with metadata about this run."""
     logging.debug(_('Outputting JSON'))
     output = common.setup_status_output(start_timestamp)
     if signed:
@@ -99,7 +105,10 @@ def main():
 
     if 'jarsigner' not in config:
         raise FDroidException(
-            _('Java jarsigner not found! Install in standard location or set java_paths!'))
+            _(
+                'Java jarsigner not found! Install in standard location or set java_paths!'
+            )
+        )
 
     repodirs = ['repo']
     if config['archive_older'] != 0:

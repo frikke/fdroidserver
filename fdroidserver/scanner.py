@@ -34,7 +34,7 @@ from .exception import BuildException, VCSException
 config = None
 options = None
 
-DEFAULT_JSON_PER_BUILD = {'errors': [], 'warnings': [], 'infos': []}
+DEFAULT_JSON_PER_BUILD = {'errors': [], 'warnings': [], 'infos': []}  # type: ignore
 json_per_build = DEFAULT_JSON_PER_BUILD
 
 MAVEN_URL_REGEX = re.compile(r"""\smaven\s*{.*?(?:setUrl|url)\s*=?\s*(?:uri)?\(?\s*["']?([^\s"']+)["']?[^}]*}""",
@@ -50,6 +50,7 @@ CODE_SIGNATURES = {
     exp: re.compile(r'.[\s]*d[\s]*[0-9]*[\s]*[0-9*][\s]*[0-9]*[\s]*' + exp, re.IGNORECASE) for exp in [
         r'(com\.google\.firebase[^\s]*)',
         r'(com\.google\.android\.gms[^\s]*)',
+        r'(com\.google\.android\.play\.core[^\s]*)',
         r'(com\.google\.tagmanager[^\s]*)',
         r'(com\.google\.analytics[^\s]*)',
         r'(com\.android\.billing[^\s]*)',
@@ -65,6 +66,9 @@ NON_FREE_GRADLE_LINES = {
         r'google.*ad.*view',
         r'google.*admob',
         r'google.*play.*services',
+        r'com.google.android.play:core.*',
+        r'com.android.billingclient',
+        r'androidx.work:work-gcm',
         r'crittercism',
         r'heyzap',
         r'jpct.*ae',
@@ -100,8 +104,18 @@ def get_gradle_compile_commands(build):
 
 
 def scan_binary(apkfile):
-    logging.info("Scanning APK for known non-free classes.")
+    """Scan output of apkanalyzer for known non-free classes.
+
+    apkanalyzer produces useful output when it can run, but it does
+    not support all recent JDK versions, and also some DEX versions,
+    so this cannot count on it to always produce useful output or even
+    to run without exiting with an error.
+
+    """
+    logging.info(_('Scanning APK with apkanalyzer for known non-free classes.'))
     result = common.SdkToolsPopen(["apkanalyzer", "dex", "packages", "--defined-only", apkfile], output=False)
+    if result.returncode != 0:
+        logging.warning(_('scanner not cleanly run apkanalyzer: %s') % result.output)
     problems = 0
     for suspect, regexp in CODE_SIGNATURES.items():
         matches = regexp.findall(result.output)
@@ -115,24 +129,26 @@ def scan_binary(apkfile):
 
 
 def scan_source(build_dir, build=metadata.Build()):
-    """Scan the source code in the given directory (and all subdirectories)
-    and return the number of fatal problems encountered
-    """
+    """Scan the source code in the given directory (and all subdirectories).
 
+    Returns
+    -------
+    the number of fatal problems encountered.
+    """
     count = 0
 
-    whitelisted = [
+    allowlisted = [
         'firebase-jobdispatcher',  # https://github.com/firebase/firebase-jobdispatcher-android/blob/master/LICENSE
         'com.firebaseui',          # https://github.com/firebase/FirebaseUI-Android/blob/master/LICENSE
         'geofire-android'          # https://github.com/firebase/geofire-java/blob/master/LICENSE
     ]
 
-    def is_whitelisted(s):
-        return any(wl in s for wl in whitelisted)
+    def is_allowlisted(s):
+        return any(al in s for al in allowlisted)
 
     def suspects_found(s):
         for n, r in NON_FREE_GRADLE_LINES.items():
-            if r.match(s) and not is_whitelisted(s):
+            if r.match(s) and not is_allowlisted(s):
                 yield n
 
     allowed_repos = [re.compile(r'^https://' + re.escape(repo) + r'/*') for repo in [
@@ -178,10 +194,18 @@ def scan_source(build_dir, build=metadata.Build()):
         return False
 
     def ignoreproblem(what, path_in_build_dir):
-        """
-        :param what: string describing the problem, will be printed in log messages
-        :param path_in_build_dir: path to the file relative to `build`-dir
-        "returns: 0 as we explicitly ignore the file, so don't count an error
+        """No summary.
+
+        Parameters
+        ----------
+        what: string
+          describing the problem, will be printed in log messages
+        path_in_build_dir
+          path to the file relative to `build`-dir
+
+        Returns
+        -------
+        0 as we explicitly ignore the file, so don't count an error
         """
         msg = ('Ignoring %s at %s' % (what, path_in_build_dir))
         logging.info(msg)
@@ -190,11 +214,20 @@ def scan_source(build_dir, build=metadata.Build()):
         return 0
 
     def removeproblem(what, path_in_build_dir, filepath):
-        """
-        :param what: string describing the problem, will be printed in log messages
-        :param path_in_build_dir: path to the file relative to `build`-dir
-        :param filepath: Path (relative to our current path) to the file
-        "returns: 0 as we deleted the offending file
+        """No summary.
+
+        Parameters
+        ----------
+        what: string
+          describing the problem, will be printed in log messages
+        path_in_build_dir
+          path to the file relative to `build`-dir
+        filepath
+          Path (relative to our current path) to the file
+
+        Returns
+        -------
+        0 as we deleted the offending file
         """
         msg = ('Removing %s at %s' % (what, path_in_build_dir))
         logging.info(msg)
@@ -210,10 +243,18 @@ def scan_source(build_dir, build=metadata.Build()):
         return 0
 
     def warnproblem(what, path_in_build_dir):
-        """
-        :param what: string describing the problem, will be printed in log messages
-        :param path_in_build_dir: path to the file relative to `build`-dir
-        :returns: 0, as warnings don't count as errors
+        """No summary.
+
+        Parameters
+        ----------
+        what: string
+          describing the problem, will be printed in log messages
+        path_in_build_dir
+          path to the file relative to `build`-dir
+
+        Returns
+        -------
+        0, as warnings don't count as errors
         """
         if toignore(path_in_build_dir):
             return 0
@@ -223,19 +264,28 @@ def scan_source(build_dir, build=metadata.Build()):
         return 0
 
     def handleproblem(what, path_in_build_dir, filepath):
-        """Dispatches to problem handlers (ignore, delete, warn) or returns 1
-         for increasing the error count
+        """Dispatches to problem handlers (ignore, delete, warn).
 
-        :param what: string describing the problem, will be printed in log messages
-        :param path_in_build_dir: path to the file relative to `build`-dir
-        :param filepath: Path (relative to our current path) to the file
-        :returns: 0 if the problem was ignored/deleted/is only a warning, 1 otherwise
+        Or returns 1 for increasing the error count.
+
+        Parameters
+        ----------
+        what: string
+          describing the problem, will be printed in log messages
+        path_in_build_dir
+          path to the file relative to `build`-dir
+        filepath
+          Path (relative to our current path) to the file
+
+        Returns
+        -------
+        0 if the problem was ignored/deleted/is only a warning, 1 otherwise
         """
         if toignore(path_in_build_dir):
             return ignoreproblem(what, path_in_build_dir)
         if todelete(path_in_build_dir):
             return removeproblem(what, path_in_build_dir, filepath)
-        if 'src/test' in filepath or '/test/' in path_in_build_dir:
+        if 'src/test' in path_in_build_dir or '/test/' in path_in_build_dir:
             return warnproblem(what, path_in_build_dir)
         if options and 'json' in vars(options) and options.json:
             json_per_build['errors'].append([what, path_in_build_dir])
@@ -420,7 +470,7 @@ def main():
             else:
                 build_dir = os.path.join('build', appid)
 
-            if app.builds:
+            if app.get('Builds'):
                 logging.info(_("Processing {appid}").format(appid=appid))
                 # Set up vcs interface and make sure we have the latest code...
                 vcs = common.getvcs(app.RepoType, app.Repo, build_dir)
@@ -434,9 +484,9 @@ def main():
                     logging.warning(_('Scanner found {count} problems in {appid}:')
                                     .format(count=count, appid=appid))
                     probcount += count
-                app.builds = []
+                app['Builds'] = []
 
-            for build in app.builds:
+            for build in app.get('Builds', []):
                 json_per_build = DEFAULT_JSON_PER_BUILD
                 json_per_appid[build.versionCode] = json_per_build
 

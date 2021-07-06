@@ -40,7 +40,7 @@ def get_data_files():
         data = fp.read()
 
     data_files.append((data_prefix + '/share/doc/fdroidserver/examples',
-                       ['buildserver/config.buildserver.py', ]
+                       ['buildserver/config.buildserver.yml', ]
                        + re.findall(r'include (examples/.*)', data)))
 
     for f in re.findall(r'include (locale/[a-z][a-z][a-zA-Z_]*/LC_MESSAGES/fdroidserver.mo)', data):
@@ -53,7 +53,7 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(name='fdroidserver',
-      version='2.0a0',
+      version='2.1a0',
       description='F-Droid Server Tools',
       long_description=long_description,
       long_description_content_type='text/markdown',
@@ -64,7 +64,7 @@ setup(name='fdroidserver',
       packages=['fdroidserver', 'fdroidserver.asynchronousfilereader'],
       scripts=['fdroid', 'makebuildserver'],
       data_files=get_data_files(),
-      python_requires='>=3.4',
+      python_requires='>=3.5',
       cmdclass={'versioncheck': VersionCheckCommand},
       setup_requires=[
           'babel',
@@ -88,7 +88,16 @@ setup(name='fdroidserver',
           'yamllint',
       ],
       extras_require={
-          'test': ['pyjks'],
+          'test': [
+              'pyjks',
+              'html5print'
+              ],
+          'docs': [
+              'sphinx',
+              'numpydoc',
+              'pydata_sphinx_theme',
+              'pydocstyle',
+          ]
       },
       classifiers=[
           'Development Status :: 4 - Beta',

@@ -49,6 +49,7 @@ apt-get upgrade --download-only
 apt-get upgrade
 
 packages="
+ androguard/stretch-backports
  ant
  asn1c
  ant-contrib
@@ -71,7 +72,10 @@ packages="
  git-core
  git-svn
  gperf
- gpg/stretch-backports
+ gpg/stretch-backports-sloppy
+ gpgconf/stretch-backports-sloppy
+ libassuan0/stretch-backports
+ libgpg-error0/stretch-backports
  javacc
  libarchive-zip-perl
  libexpat1-dev
@@ -92,13 +96,13 @@ packages="
  openjdk-8-jre-headless
  openjdk-8-jdk-headless
  optipng
- p7zip
  pkg-config
  python-gnupg
  python-lxml
  python-magic
  python-pip
  python-setuptools
+ python3-asn1crypto/stretch-backports
  python3-defusedxml
  python3-git
  python3-gitdb
@@ -106,6 +110,7 @@ packages="
  python3-pip
  python3-pyasn1
  python3-pyasn1-modules
+ python3-qrcode
  python3-requests
  python3-setuptools
  python3-smmap

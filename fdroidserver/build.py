@@ -23,7 +23,6 @@ import glob
 import subprocess
 import posixpath
 import re
-import resource
 import sys
 import tarfile
 import threading
@@ -55,14 +54,19 @@ except ImportError:
 def build_server(app, build, vcs, build_dir, output_dir, log_dir, force):
     """Do a build on the builder vm.
 
-    :param app: app metadata dict
-    :param build:
-    :param vcs: version control system controller object
-    :param build_dir: local source-code checkout of app
-    :param output_dir: target folder for the build result
-    :param force:
+    Parameters
+    ----------
+    app
+        app metadata dict
+    build
+    vcs
+        version control system controller object
+    build_dir
+        local source-code checkout of app
+    output_dir
+        target folder for the build result
+    force
     """
-
     global buildserverid
 
     try:
@@ -74,7 +78,7 @@ def build_server(app, build, vcs, build_dir, output_dir, log_dir, force):
     else:
         logging.getLogger("paramiko").setLevel(logging.WARN)
 
-    sshinfo = vmtools.get_clean_builder('builder', options.reset_server)
+    sshinfo = vmtools.get_clean_builder('builder')
 
     output = None
     try:
@@ -83,7 +87,6 @@ def build_server(app, build, vcs, build_dir, output_dir, log_dir, force):
                 buildserverid = subprocess.check_output(['vagrant', 'ssh', '-c',
                                                          'cat /home/vagrant/buildserverid'],
                                                         cwd='builder').strip().decode()
-                status_output['buildserverid'] = buildserverid
                 logging.debug(_('Fetched buildserverid from VM: {buildserverid}')
                               .format(buildserverid=buildserverid))
             except Exception as e:
@@ -141,8 +144,8 @@ def build_server(app, build, vcs, build_dir, output_dir, log_dir, force):
         ftp.chdir(homedir)
 
         ftp.put(os.path.join(serverpath, '..', 'buildserver',
-                             'config.buildserver.py'), 'config.py')
-        ftp.chmod('config.py', 0o600)
+                             'config.buildserver.yml'), 'config.yml')
+        ftp.chmod('config.yml', 0o600)
 
         # Copy over the ID (head commit hash) of the fdroidserver in use...
         with open(os.path.join(os.getcwd(), 'tmp', 'fdroidserverid'), 'wb') as fp:
@@ -238,7 +241,7 @@ def build_server(app, build, vcs, build_dir, output_dir, log_dir, force):
         try:
             cmd_stdout = chan.makefile('rb', 1024)
             output = bytes()
-            output += common.get_android_tools_version_log(build.ndk_path()).encode()
+            output += common.get_android_tools_version_log().encode()
             while not chan.exit_status_ready():
                 line = cmd_stdout.readline()
                 if line:
@@ -295,7 +298,8 @@ def build_server(app, build, vcs, build_dir, output_dir, log_dir, force):
     finally:
         # Suspend the build server.
         vm = vmtools.get_build_vm('builder')
-        vm.suspend()
+        logging.info('destroying buildserver after build')
+        vm.destroy()
 
         # deploy logfile to repository web server
         if output:
@@ -320,7 +324,7 @@ def force_gradle_build_tools(build_dir, build_tools):
 
 
 def transform_first_char(string, method):
-    """Uses method() on the first character of string."""
+    """Use method() on the first character of string."""
     if len(string) == 0:
         return string
     if len(string) == 1:
@@ -333,11 +337,10 @@ def add_failed_builds_entry(failed_builds, appid, build, entry):
 
 
 def get_metadata_from_apk(app, build, apkfile):
-    """get the required metadata from the built APK
+    """Get the required metadata from the built APK.
 
-    versionName is allowed to be a blank string, i.e. ''
+    VersionName is allowed to be a blank string, i.e. ''
     """
-
     appid, versionCode, versionName = common.get_apk_id(apkfile)
     native_code = common.get_native_code(apkfile)
 
@@ -361,13 +364,16 @@ def build_local(app, build, vcs, build_dir, output_dir, log_dir, srclib_dir, ext
     ndk_path = build.ndk_path()
     if build.ndk or (build.buildjni and build.buildjni != ['no']):
         if not ndk_path:
-            logging.critical("Android NDK version '%s' could not be found!" % build.ndk or 'r12b')
-            logging.critical("Configured versions:")
+            logging.warning("Android NDK version '%s' could not be found!" % build.ndk)
+            logging.warning("Configured versions:")
             for k, v in config['ndk_paths'].items():
                 if k.endswith("_orig"):
                     continue
-                logging.critical("  %s: %s" % (k, v))
-            raise FDroidException()
+                logging.warning("  %s: %s" % (k, v))
+            if onserver:
+                common.auto_install_ndk(build)
+            else:
+                raise FDroidException()
         elif not os.path.isdir(ndk_path):
             logging.critical("Android NDK '%s' is not a directory!" % ndk_path)
             raise FDroidException()
@@ -399,7 +405,7 @@ def build_local(app, build, vcs, build_dir, output_dir, log_dir, srclib_dir, ext
         log_path = os.path.join(log_dir,
                                 common.get_toolsversion_logname(app, build))
         with open(log_path, 'w') as f:
-            f.write(common.get_android_tools_version_log(build.ndk_path()))
+            f.write(common.get_android_tools_version_log())
     else:
         if build.sudo:
             logging.warning('%s:%s runs this on the buildserver with sudo:\n\t%s\nThese commands were skipped because fdroid build is not running on a dedicated build server.'
@@ -658,7 +664,7 @@ def build_local(app, build, vcs, build_dir, output_dir, log_dir, srclib_dir, ext
 
         # expected to fail.
         # Signing will fail if not set by environnment vars (cf. p4a docs).
-        # But the unsigned apk will be ok.
+        # But the unsigned APK will be ok.
         p.returncode = 0
 
     elif bmethod == 'gradle':
@@ -683,9 +689,17 @@ def build_local(app, build, vcs, build_dir, output_dir, log_dir, srclib_dir, ext
 
         bindir = os.path.join(root_dir, 'bin')
 
+    if os.path.isdir(os.path.join(build_dir, '.git')):
+        import git
+        commit_id = common.get_head_commit_id(git.repo.Repo(build_dir))
+    else:
+        commit_id = build.commit
+
     if p is not None and p.returncode != 0:
-        raise BuildException("Build failed for %s:%s" % (app.id, build.versionName), p.output)
-    logging.info("Successfully built version " + build.versionName + ' of ' + app.id)
+        raise BuildException("Build failed for %s:%s@%s" % (app.id, build.versionName, commit_id),
+                             p.output)
+    logging.info("Successfully built version {versionName} of {appid} from {commit_id}"
+                 .format(versionName=build.versionName, appid=app.id, commit_id=commit_id))
 
     omethod = build.output_method()
     if omethod == 'maven':
@@ -739,7 +753,7 @@ def build_local(app, build, vcs, build_dir, output_dir, log_dir, srclib_dir, ext
             # really old path
             os.path.join(root_dir, 'build', 'apk'),
             ]
-        # If we build with gradle flavours with gradle plugin >= 3.0 the apk will be in
+        # If we build with gradle flavours with gradle plugin >= 3.0 the APK will be in
         # a subdirectory corresponding to the flavour command used, but with different
         # capitalization.
         if flavours_cmd:
@@ -781,10 +795,10 @@ def build_local(app, build, vcs, build_dir, output_dir, log_dir, srclib_dir, ext
         raise BuildException("APK is debuggable")
 
     # By way of a sanity check, make sure the version and version
-    # code in our new apk match what we expect...
+    # code in our new APK match what we expect...
     logging.debug("Checking " + src)
     if not os.path.exists(src):
-        raise BuildException("Unsigned apk is not at expected location of " + src)
+        raise BuildException("Unsigned APK is not at expected location of " + src)
 
     if common.get_file_extension(src) == 'apk':
         vercode, version = get_metadata_from_apk(app, build, src)
@@ -796,11 +810,16 @@ def build_local(app, build, vcs, build_dir, output_dir, log_dir, srclib_dir, ext
                                     str(build.versionCode)))
         if (options.scan_binary or config.get('scan_binary')) and not options.skipscan:
             if scanner.scan_binary(src):
-                raise BuildException("Found blacklisted packages in final apk!")
+                raise BuildException("Found blocklisted packages in final apk!")
 
-    # Copy the unsigned apk to our destination directory for further
+    # Copy the unsigned APK to our destination directory for further
     # processing (by publish.py)...
-    dest = os.path.join(output_dir, common.get_release_filename(app, build))
+    dest = os.path.join(
+        output_dir,
+        common.get_release_filename(
+            app, build, common.get_file_extension(src)
+        )
+    )
     shutil.copyfile(src, dest)
 
     # Move the source tarball into the output directory...
@@ -812,23 +831,29 @@ def build_local(app, build, vcs, build_dir, output_dir, log_dir, srclib_dir, ext
 def trybuild(app, build, build_dir, output_dir, log_dir, also_check_dir,
              srclib_dir, extlib_dir, tmp_dir, repo_dir, vcs, test,
              server, force, onserver, refresh):
+    """Build a particular version of an application, if it needs building.
+
+    Parameters
+    ----------
+    output_dir
+        The directory where the build output will go.
+        Usually this is the 'unsigned' directory.
+    repo_dir
+        The repo directory - used for checking if the build is necessary.
+    also_check_dir
+        An additional location for checking if the build
+        is necessary (usually the archive repo)
+    test
+        True if building in test mode, in which case the build will
+        always happen, even if the output already exists. In test mode, the
+        output directory should be a temporary location, not any of the real
+        ones.
+
+    Returns
+    -------
+    Boolean
+        True if the build was done, False if it wasn't necessary.
     """
-    Build a particular version of an application, if it needs building.
-
-    :param output_dir: The directory where the build output will go. Usually
-       this is the 'unsigned' directory.
-    :param repo_dir: The repo directory - used for checking if the build is
-       necessary.
-    :param also_check_dir: An additional location for checking if the build
-       is necessary (usually the archive repo)
-    :param test: True if building in test mode, in which case the build will
-       always happen, even if the output already exists. In test mode, the
-       output directory should be a temporary location, not any of the real
-       ones.
-
-    :returns: True if the build was done, False if it wasn't necessary.
-    """
-
     dest_file = common.get_release_filename(app, build)
 
     dest = os.path.join(output_dir, dest_file)
@@ -861,7 +886,7 @@ def trybuild(app, build, build_dir, output_dir, log_dir, also_check_dir,
 
 
 def force_halt_build(timeout):
-    """Halt the currently running Vagrant VM, to be called from a Timer"""
+    """Halt the currently running Vagrant VM, to be called from a Timer."""
     logging.error(_('Force halting build after {0} sec timeout!').format(timeout))
     timeout_event.set()
     vm = vmtools.get_build_vm('builder')
@@ -869,8 +894,13 @@ def force_halt_build(timeout):
 
 
 def parse_commandline():
-    """Parse the command line. Returns options, parser."""
+    """Parse the command line.
 
+    Returns
+    -------
+    options
+    parser
+    """
     parser = argparse.ArgumentParser(usage="%(prog)s [options] [APPID[:VERCODE] [APPID[:VERCODE] ...]]")
     common.setup_global_opts(parser)
     parser.add_argument("appid", nargs='*', help=_("application ID with optional versionCode in the form APPID[:VERCODE]"))
@@ -1004,35 +1034,40 @@ def main():
 
     # Read all app and srclib metadata
     pkgs = common.read_pkg_args(options.appid, True)
-    allapps = metadata.read_metadata(not options.onserver, pkgs, options.refresh, sort_by_time=True)
+    allapps = metadata.read_metadata(pkgs, sort_by_time=True)
     apps = common.read_app_args(options.appid, allapps, True)
 
     for appid, app in list(apps.items()):
-        if (app.Disabled and not options.force) or not app.RepoType or not app.builds:
+        if (app.get('Disabled') and not options.force) or not app.get('RepoType') or not app.get('Builds', []):
             del apps[appid]
 
     if not apps:
         raise FDroidException("No apps to process.")
 
     # make sure enough open files are allowed to process everything
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    if len(apps) > soft:
-        try:
-            soft = len(apps) * 2
-            if soft > hard:
-                soft = hard
-            resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
-            logging.debug(_('Set open file limit to {integer}')
-                          .format(integer=soft))
-        except (OSError, ValueError) as e:
-            logging.warning(_('Setting open file limit failed: ') + str(e))
+    try:
+        import resource  # not available on Windows
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if len(apps) > soft:
+            try:
+                soft = len(apps) * 2
+                if soft > hard:
+                    soft = hard
+                resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+                logging.debug(_('Set open file limit to {integer}')
+                              .format(integer=soft))
+            except (OSError, ValueError) as e:
+                logging.warning(_('Setting open file limit failed: ') + str(e))
+    except ImportError:
+        pass
 
     if options.latest:
         for app in apps.values():
-            for build in reversed(app.builds):
+            for build in reversed(app.get('Builds', [])):
                 if build.disable and not options.force:
                     continue
-                app.builds = [build]
+                app['Builds'] = [build]
                 break
 
     if options.wiki:
@@ -1044,16 +1079,18 @@ def main():
     # Build applications...
     failed_builds = []
     build_succeeded = []
+    build_succeeded_ids = []
     status_output['failedBuilds'] = failed_builds
     status_output['successfulBuilds'] = build_succeeded
-    # Only build for 36 hours, then stop gracefully.
-    endtime = time.time() + 36 * 60 * 60
+    status_output['successfulBuildIds'] = build_succeeded_ids
+    # Only build for 72 hours, then stop gracefully.
+    endtime = time.time() + 72 * 60 * 60
     max_build_time_reached = False
     for appid, app in apps.items():
 
         first = True
 
-        for build in app.builds:
+        for build in app.get('Builds', []):
             if time.time() > endtime:
                 max_build_time_reached = True
                 break
@@ -1075,7 +1112,7 @@ def main():
             build_starttime = common.get_wiki_timestamp()
             tools_version_log = ''
             if not options.onserver:
-                tools_version_log = common.get_android_tools_version_log(build.ndk_path())
+                tools_version_log = common.get_android_tools_version_log()
                 common.write_running_status_json(status_output)
             try:
 
@@ -1102,7 +1139,7 @@ def main():
 
                     if app.Binaries is not None:
                         # This is an app where we build from source, and
-                        # verify the apk contents against a developer's
+                        # verify the APK contents against a developer's
                         # binary. We get that binary now, and save it
                         # alongside our built one in the 'unsigend'
                         # directory.
@@ -1116,7 +1153,7 @@ def main():
                         url = url.replace('%v', build.versionName)
                         url = url.replace('%c', str(build.versionCode))
                         logging.info("...retrieving " + url)
-                        of = re.sub(r'.apk$', '.binary.apk', common.get_release_filename(app, build))
+                        of = re.sub(r'\.apk$', '.binary.apk', common.get_release_filename(app, build))
                         of = os.path.join(binaries_dir, of)
                         try:
                             net.download_file(url, local_filename=of)
@@ -1136,8 +1173,12 @@ def main():
                             compare_result = \
                                 common.verify_apks(of, unsigned_apk, tmpdir)
                             if compare_result:
-                                logging.debug('removing %s', unsigned_apk)
-                                os.remove(unsigned_apk)
+                                if options.test:
+                                    logging.warning(_('Keeping failed build "{apkfilename}"')
+                                                    .format(apkfilename=unsigned_apk))
+                                else:
+                                    logging.debug('removing %s', unsigned_apk)
+                                    os.remove(unsigned_apk)
                                 logging.debug('removing %s', of)
                                 os.remove(of)
                                 compare_result = compare_result.split('\n')
@@ -1159,6 +1200,7 @@ def main():
                                              'successfully')
 
                     build_succeeded.append(app)
+                    build_succeeded_ids.append([app['id'], build.versionCode])
                     wikilog = "Build succeeded"
 
             except VCSException as vcse:
@@ -1170,6 +1212,7 @@ def main():
                     common.force_exit(1)
                 add_failed_builds_entry(failed_builds, appid, build, vcse)
                 wikilog = str(vcse)
+                common.deploy_build_log_with_rsync(appid, build.versionCode, str(vcse))
             except FDroidException as e:
                 with open(os.path.join(log_dir, appid + '.log'), 'a+') as f:
                     f.write('\n\n============================================================\n')
@@ -1257,12 +1300,14 @@ def main():
                     .format(id=fdroidserverid))
         if os.cpu_count():
             txt += "* host processors: %d\n" % os.cpu_count()
+            status_output['hostOsCpuCount'] = os.cpu_count()
         if os.path.isfile('/proc/meminfo') and os.access('/proc/meminfo', os.R_OK):
             with open('/proc/meminfo') as fp:
                 for line in fp:
                     m = re.search(r'MemTotal:\s*([0-9].*)', line)
                     if m:
                         txt += "* host RAM: %s\n" % m.group(1)
+                        status_output['hostProcMeminfoMemTotal'] = m.group(1)
                         break
         fdroid_path = os.path.realpath(os.path.join(os.path.dirname(__file__), '..'))
         buildserver_config = os.path.join(fdroid_path, 'makebuildserver.config.py')
@@ -1272,15 +1317,20 @@ def main():
                     m = re.search(r'cpus\s*=\s*([0-9].*)', line)
                     if m:
                         txt += "* guest processors: %s\n" % m.group(1)
+                        status_output['guestVagrantVmCpus'] = m.group(1)
                     m = re.search(r'memory\s*=\s*([0-9].*)', line)
                     if m:
                         txt += "* guest RAM: %s MB\n" % m.group(1)
+                        status_output['guestVagrantVmMemory'] = m.group(1)
         txt += "* successful builds: %d\n" % len(build_succeeded)
         txt += "* failed builds: %d\n" % len(failed_builds)
         txt += "\n\n"
         newpage.save(txt, summary='Run log')
         newpage = site.Pages['build']
         newpage.save('#REDIRECT [[' + wiki_page_path + ']]', summary='Update redirect')
+
+    if buildserverid:
+        status_output['buildserver'] = {'commitId': buildserverid}
 
     if not options.onserver:
         common.write_status_json(status_output)

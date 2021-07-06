@@ -30,6 +30,7 @@ import tempfile
 import urllib.parse
 import zipfile
 import calendar
+import qrcode
 from binascii import hexlify, unhexlify
 from datetime import datetime, timezone
 from xml.dom.minidom import Document
@@ -48,20 +49,29 @@ def make(apps, apks, repodir, archive):
 
     This requires properly initialized options and config objects.
 
-    :param apps: OrderedDict of apps to go into the index, each app should have
-                 at least one associated apk
-    :param apks: list of apks to go into the index
-    :param repodir: the repo directory
-    :param archive: True if this is the archive repo, False if it's the
-                    main one.
+    Parameters
+    ----------
+    apps
+      OrderedDict of apps to go into the index, each app should have
+      at least one associated apk
+    apks
+      list of apks to go into the index
+    repodir
+      the repo directory
+    archive
+      True if this is the archive repo, False if it's the
+      main one.
     """
     from fdroidserver.update import METADATA_VERSION
 
-    if not common.options.nosign:
+    if hasattr(common.options, 'nosign') and common.options.nosign:
+        if 'keystore' not in common.config and 'repo_pubkey' not in common.config:
+            raise FDroidException(_('"repo_pubkey" must be present in config.yml when using --nosign!'))
+    else:
         common.assert_config_keystore(common.config)
 
     # Historically the index has been sorted by App Name, so we enforce this ordering here
-    sortedids = sorted(apps, key=lambda appid: apps[appid]['Name'].upper())
+    sortedids = sorted(apps, key=lambda appid: common.get_app_display_name(apps[appid]).upper())
     sortedapps = collections.OrderedDict()
     for appid in sortedids:
         sortedapps[appid] = apps[appid]
@@ -75,13 +85,14 @@ def make(apps, apks, repodir, archive):
 
     if archive:
         repodict['name'] = common.config['archive_name']
-        repodict['icon'] = os.path.basename(common.config['archive_icon'])
-        repodict['address'] = common.config['archive_url']
+        repodict['icon'] = common.config.get('archive_icon', common.default_config['repo_icon'])
         repodict['description'] = common.config['archive_description']
-        urlbasepath = os.path.basename(urllib.parse.urlparse(common.config['archive_url']).path)
+        archive_url = common.config.get('archive_url', common.config['repo_url'][:-4] + 'archive')
+        repodict['address'] = archive_url
+        urlbasepath = os.path.basename(urllib.parse.urlparse(archive_url).path)
     else:
         repodict['name'] = common.config['repo_name']
-        repodict['icon'] = os.path.basename(common.config['repo_icon'])
+        repodict['icon'] = common.config.get('repo_icon', common.default_config['repo_icon'])
         repodict['address'] = common.config['repo_url']
         repodict['description'] = common.config['repo_description']
         urlbasepath = os.path.basename(urllib.parse.urlparse(common.config['repo_url']).path)
@@ -125,6 +136,337 @@ def make(apps, apks, repodir, archive):
             fdroid_signing_key_fingerprints)
     make_v1(sortedapps, apks, repodir, repodict, requestsdict,
             fdroid_signing_key_fingerprints)
+    make_website(sortedapps, repodir, repodict)
+
+
+def _should_file_be_generated(path, magic_string):
+    if os.path.exists(path):
+        with open(path) as f:
+            # if the magic_string is not in the first line the file should be overwritten
+            if magic_string not in f.readline():
+                return False
+    return True
+
+
+def make_website(apps, repodir, repodict):
+    _ignored, repo_pubkey_fingerprint = extract_pubkey()
+    repo_pubkey_fingerprint_stripped = repo_pubkey_fingerprint.replace(" ", "")
+    link = repodict["address"]
+    link_fingerprinted = ('{link}?fingerprint={fingerprint}'
+                          .format(link=link, fingerprint=repo_pubkey_fingerprint_stripped))
+    # do not change this string, as it will break updates for files with older versions of this string
+    autogenerate_comment = "auto-generated - fdroid index updates will overwrite this file"
+
+    if not os.path.exists(repodir):
+        os.makedirs(repodir)
+
+    qrcode.make(link_fingerprinted).save(os.path.join(repodir, "index.png"))
+
+    html_name = 'index.html'
+    html_file = os.path.join(repodir, html_name)
+
+    if _should_file_be_generated(html_file, autogenerate_comment):
+        with open(html_file, 'w') as f:
+            name = repodict["name"]
+            description = repodict["description"]
+            icon = repodict["icon"]
+            f.write("""<!-- {autogenerate_comment} -->
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+  <head>
+    <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+    <meta content="width=device-width; initial-scale=1.0; minimum-scale=0.5; maximum-scale=2.0; user-scalable=1;" name="viewport">
+    <title>
+   {name}
+    </title>
+    <base href="index.html">
+    <link href="index.css" rel="stylesheet" type="text/css">
+    <link href="icons/{icon}" rel="icon" type="image/png">
+    <link href="icons/{icon}" rel="shortcut icon" type="image/png">
+    <meta content="{name}" property="og:site_name">
+    <meta content="{name}" property="og:title">
+    <meta content="" property="og:determiner">
+    <meta content="{description}" property="og:description">
+    <meta content="index,nofollow" name="robots">
+  </head>
+  <body>
+    <h2>
+      {name}
+    </h2>
+    <div id="intro">
+      <p style="margin-bottom:.2em;">
+        <span style="float:right;width:100px;margin-left:.5em;">
+          <a href="index.png" title="QR: test">
+            <img alt="QR: test" src="index.png" width="100">
+          </a>
+        </span>
+        {description}
+        <br>
+        <br>
+        Currently it serves
+        <kbd>
+          {number_of_apps}
+        </kbd>
+        apps. To add it to your F-Droid client, scan the QR code (click it to enlarge) or use this URL:
+      </p>
+      <p class="center" style="margin-top:.5em">
+        <a href="{link_fingerprinted}">
+          <code style="color:#000000;font-weight:bold;">
+            {link}
+          </code>
+        </a>
+      </p>
+      <p>
+        If you would like to manually verify the fingerprint (SHA-256) of the repository signing key, here it is:
+        <br>
+        <blockcode style="color:#000000;font-weight:bold;">
+          {fingerprint}
+        </blockcode>
+      </p>
+    </div>
+  </body>
+</html>
+""".format(autogenerate_comment=autogenerate_comment,
+                    description=description,
+                    fingerprint=repo_pubkey_fingerprint,
+                    icon=icon,
+                    link=link,
+                    link_fingerprinted=link_fingerprinted,
+                    name=name,
+                    number_of_apps=str(len(apps))))
+
+    css_file = os.path.join(repodir, "index.css")
+    if _should_file_be_generated(css_file, autogenerate_comment):
+        with open(css_file, "w") as f:
+            # this auto generated comment was not included via .format(), as python seems to have problems with css files in combination with .format()
+            f.write("""/* auto-generated - fdroid index updates will overwrite this file */
+BODY {
+  font-family         : Arial, Helvetica, Sans-Serif;
+  color               : #0000ee;
+  background-color    : #ffffff;
+}
+p {
+  text-align          : justify;
+}
+p.center {
+  text-align          : center;
+}
+TD {
+  font-family         : Arial, Helvetica, Sans-Serif;
+  color               : #0000ee;
+}
+body,td {
+  font-size           : 14px;
+}
+TH {
+  font-family         : Arial, Helvetica, Sans-Serif;
+  color               : #0000ee;
+  background-color    : #F5EAD4;
+}
+a:link {
+  color               : #bb0000;
+}
+a:visited {
+  color               : #ff0000;
+}
+.zitat {
+  margin-left         : 1cm;
+  margin-right        : 1cm;
+  font-style          : italic;
+}
+#intro {
+  border-spacing      : 1em;
+  border              : 1px solid gray;
+  border-radius       : 0.5em;
+  box-shadow          : 10px 10px 5px #888;
+  margin              : 1.5em;
+  font-size           : .9em;
+  width               : 600px;
+  max-width           : 90%;
+  display             : table;
+  margin-left         : auto;
+  margin-right        : auto;
+  font-size           : .8em;
+  color               : #555555;
+}
+#intro > p {
+  margin-top          : 0;
+}
+#intro p:last-child {
+  margin-bottom       : 0;
+}
+.last {
+  border-bottom       : 1px solid black;
+  padding-bottom      : .5em;
+  text-align          : center;
+}
+table {
+  border-collapse     : collapse;
+}
+h2 {
+  text-align          : center;
+}
+.perms {
+  font-family         : monospace;
+  font-size           : .8em;
+}
+.repoapplist {
+  display             : table;
+  border-collapse     : collapse;
+  margin-left         : auto;
+  margin-right        : auto;
+  width               : 600px;
+  max-width           : 90%;
+}
+.approw, appdetailrow {
+  display             : table-row;
+}
+.appdetailrow {
+  display             : flex;
+  padding             : .5em;
+}
+.appiconbig, .appdetailblock, .appdetailcell {
+  display             : table-cell
+}
+.appiconbig {
+  vertical-align      : middle;
+  text-align          : center;
+}
+.appdetailinner {
+  width               : 100%;
+}
+.applinkcell {
+  text-align          : center;
+  float               : right;
+  width               : 100%;
+  margin-bottom       : .1em;
+}
+.paddedlink {
+  margin              : 1em;
+}
+.approw {
+  border-spacing      : 1em;
+  border              : 1px solid gray;
+  border-radius       : 0.5em;
+  padding             : 0.5em;
+  margin              : 1.5em;
+}
+.appdetailinner .appdetailrow:first-child {
+  background-color    : #d5d5d5;
+}
+.appdetailinner .appdetailrow:first-child .appdetailcell {
+  min-width           : 33%;
+  flex                : 1 33%;
+  text-align          : center;
+}
+.appdetailinner .appdetailrow:first-child .appdetailcell:first-child {
+  text-align          : left;
+}
+.appdetailinner .appdetailrow:first-child .appdetailcell:last-child {
+  float               : none;
+  text-align          : right;
+}
+.minor-details {
+  font-size           : .8em;
+  color               : #555555;
+}
+.boldname {
+  font-weight         : bold;
+}
+#appcount {
+  text-align          : center;
+  margin-bottom       : .5em;
+}
+kbd {
+  padding             : 0.1em 0.6em;
+  border              : 1px solid #CCC;
+  background-color    : #F7F7F7;
+  color               : #333;
+  box-shadow          : 0px 1px 0px rgba(0, 0, 0, 0.2), 0px 0px 0px 2px #FFF inset;
+  border-radius       : 3px;
+  display             : inline-block;
+  margin              : 0px 0.1em;
+  text-shadow         : 0px 1px 0px #FFF;
+  white-space         : nowrap;
+}
+div.filterline, div.repoline {
+  display             : table;
+  margin-left         : auto;
+  margin-right        : auto;
+  margin-bottom       : 1em;
+  vertical-align      : middle;
+  display             : table;
+  font-size           : .8em;
+}
+.filterline form {
+  display             : table-row;
+}
+.filterline .filtercell {
+  display             : table-cell;
+  vertical-align      : middle;
+}
+fieldset {
+  float               : left;
+}
+fieldset select, fieldset input, #reposelect select, #reposelect input {
+  font-size           : .9em;
+}
+.pager {
+  display             : table;
+  margin-left         : auto;
+  margin-right        : auto;
+  width               : 600px;
+  max-width           : 90%;
+  padding-top         : .6em;
+}
+/* should correspond to .repoapplist */
+.pagerrow {
+  display             : table-row;
+}
+.pagercell {
+  display             : table-cell;
+}
+.pagercell.left {
+  text-align          : left;
+  padding-right       : 1em;
+}
+.pagercell.middle {
+  text-align          : center;
+  font-size           : .9em;
+  color               : #555;
+}
+.pagercell.right {
+  text-align          : right;
+  padding-left        : 1em;
+}
+.anti {
+  color               : peru;
+}
+.antibold {
+  color               : crimson;
+}
+#footer {
+  text-align          : center;
+  margin-top          : 1em;
+  font-size           : 11px;
+  color               : #555;
+}
+#footer img {
+  vertical-align      : middle;
+}
+@media (max-width: 600px) {
+  .repoapplist {
+    display             : block;
+  }
+  .appdetailinner, .appdetailrow {
+    display             : block;
+  }
+  .appdetailcell {
+    display             : block;
+    float               : left;
+    line-height         : 1.5em;
+  }
+}""")
 
 
 def make_v1(apps, packages, repodir, repodict, requestsdict, fdroid_signing_key_fingerprints):
@@ -158,8 +500,8 @@ def make_v1(apps, packages, repodir, repodict, requestsdict, fdroid_signing_key_
         for k, v in sorted(appdict.items()):
             if not v:
                 continue
-            if k in ('builds', 'comments', 'metadatapath',
-                     'ArchivePolicy', 'AutoUpdateMode', 'MaintainerNotes',
+            if k in ('Builds', 'comments', 'metadatapath',
+                     'ArchivePolicy', 'AutoName', 'AutoUpdateMode', 'MaintainerNotes',
                      'Provides', 'Repo', 'RepoType', 'RequiresRoot',
                      'UpdateCheckData', 'UpdateCheckIgnore', 'UpdateCheckMode',
                      'UpdateCheckName', 'NoSourceSince', 'VercodeOperation'):
@@ -172,10 +514,6 @@ def make_v1(apps, packages, repodir, repodict, requestsdict, fdroid_signing_key_
                 k = 'suggestedVersionCode'
             elif k == 'CurrentVersion':  # TODO make SuggestedVersionName the canonical name
                 k = 'suggestedVersionName'
-            elif k == 'AutoName':
-                if 'Name' not in apps[packageName]:
-                    d['name'] = v
-                continue
             else:
                 k = k[:1].lower() + k[1:]
             d[k] = v
@@ -201,7 +539,7 @@ def make_v1(apps, packages, repodir, repodict, requestsdict, fdroid_signing_key_
         if not package.get('versionName'):
             app = apps[packageName]
             versionCodeStr = str(package['versionCode'])  # TODO build.versionCode should be int!
-            for build in app['builds']:
+            for build in app.get('Builds', []):
                 if build['versionCode'] == versionCodeStr:
                     versionName = build.get('versionName')
                     logging.info(_('Overriding blank versionName in {apkfilename} from metadata: {version}')
@@ -231,21 +569,37 @@ def make_v1(apps, packages, repodir, repodict, requestsdict, fdroid_signing_key_
             json.dump(output, fp, default=_index_encoder_default)
 
     if common.options.nosign:
+        _copy_to_local_copy_dir(repodir, index_file)
         logging.debug(_('index-v1 must have a signature, use `fdroid signindex` to create it!'))
     else:
         signindex.config = common.config
         signindex.sign_index_v1(repodir, json_name)
 
 
+def _copy_to_local_copy_dir(repodir, f):
+    local_copy_dir = common.config.get('local_copy_dir', '')
+    if os.path.exists(local_copy_dir):
+        destdir = os.path.join(local_copy_dir, repodir)
+        if not os.path.exists(destdir):
+            os.mkdir(destdir)
+        shutil.copy2(f, destdir, follow_symlinks=False)
+    elif local_copy_dir:
+        raise FDroidException(_('"local_copy_dir" {path} does not exist!')
+                              .format(path=local_copy_dir))
+
+
 def v1_sort_packages(packages, fdroid_signing_key_fingerprints):
-    """Sorts the supplied list to ensure a deterministic sort order for
-    package entries in the index file. This sort-order also expresses
+    """Sort the supplied list to ensure a deterministic sort order for package entries in the index file.
+
+    This sort-order also expresses
     installation preference to the clients.
     (First in this list = first to install)
 
-    :param packages: list of packages which need to be sorted before but into index file.
+    Parameters
+    ----------
+    packages
+      list of packages which need to be sorted before but into index file.
     """
-
     GROUP_DEV_SIGNED = 1
     GROUP_FDROID_SIGNED = 2
     GROUP_OTHER_SIGNED = 3
@@ -253,31 +607,28 @@ def v1_sort_packages(packages, fdroid_signing_key_fingerprints):
     def v1_sort_keys(package):
         packageName = package.get('packageName', None)
 
-        sig = package.get('signer', None)
+        signer = package.get('signer', None)
 
-        dev_sig = common.metadata_find_developer_signature(packageName)
+        dev_signer = common.metadata_find_developer_signature(packageName)
         group = GROUP_OTHER_SIGNED
-        if dev_sig and dev_sig == sig:
+        if dev_signer and dev_signer == signer:
             group = GROUP_DEV_SIGNED
         else:
-            fdroidsig = fdroid_signing_key_fingerprints.get(packageName, {}).get('signer')
-            if fdroidsig and fdroidsig == sig:
+            fdroid_signer = fdroid_signing_key_fingerprints.get(packageName, {}).get('signer')
+            if fdroid_signer and fdroid_signer == signer:
                 group = GROUP_FDROID_SIGNED
 
         versionCode = None
         if package.get('versionCode', None):
             versionCode = -int(package['versionCode'])
 
-        return(packageName, group, sig, versionCode)
+        return(packageName, group, signer, versionCode)
 
     packages.sort(key=v1_sort_keys)
 
 
 def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fingerprints):
-    """
-    aka index.jar aka index.xml
-    """
-
+    """Aka index.jar aka index.xml."""
     doc = Document()
 
     def addElement(name, value, doc, parent):
@@ -297,7 +648,7 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
         addElement(name, value, doc, parent)
 
     def addElementCheckLocalized(name, app, key, doc, parent, default=''):
-        """Fill in field from metadata or localized block
+        """Fill in field from metadata or localized block.
 
         For name/summary/description, they can come only from the app source,
         or from a dir in fdroiddata.  They can be entirely missing from the
@@ -308,7 +659,6 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
         alpha- sort order.
 
         """
-
         el = doc.createElement(name)
         value = app.get(key)
         lkey = key[:1].lower() + key[1:]
@@ -326,6 +676,8 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
             value = localized[lang].get(lkey)
         if not value:
             value = default
+        if not value and name == 'name' and app.get('AutoName'):
+            value = app['AutoName']
         el.appendChild(doc.createTextNode(value))
         parent.appendChild(el)
 
@@ -333,7 +685,7 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
     doc.appendChild(root)
 
     repoel = doc.createElement("repo")
-    repoel.setAttribute("icon", os.path.basename(repodict['icon']))
+    repoel.setAttribute("icon", repodict['icon'])
     if 'maxage' in repodict:
         repoel.setAttribute("maxage", str(repodict['maxage']))
     repoel.setAttribute("name", repodict['name'])
@@ -358,21 +710,24 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
     for appid, appdict in apps.items():
         app = metadata.App(appdict)
 
-        if app.Disabled is not None:
+        if app.get('Disabled') is not None:
             continue
 
         # Get a list of the apks for this app...
         apklist = []
+        name_from_apk = None
         apksbyversion = collections.defaultdict(lambda: [])
         for apk in apks:
             if apk.get('versionCode') and apk.get('packageName') == appid:
                 apksbyversion[apk['versionCode']].append(apk)
+                if name_from_apk is None:
+                    name_from_apk = apk.get('name')
         for versionCode, apksforver in apksbyversion.items():
-            fdroidsig = fdroid_signing_key_fingerprints.get(appid, {}).get('signer')
+            fdroid_signer = fdroid_signing_key_fingerprints.get(appid, {}).get('signer')
             fdroid_signed_apk = None
             name_match_apk = None
             for x in apksforver:
-                if fdroidsig and x.get('signer', None) == fdroidsig:
+                if fdroid_signer and x.get('signer', None) == fdroid_signer:
                     fdroid_signed_apk = x
                 if common.apk_release_filename.match(x.get('apkName', '')):
                     name_match_apk = x
@@ -398,14 +753,14 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
         if app.lastUpdated:
             addElement('lastupdated', app.lastUpdated.strftime('%Y-%m-%d'), doc, apel)
 
-        addElementCheckLocalized('name', app, 'Name', doc, apel)
+        addElementCheckLocalized('name', app, 'Name', doc, apel, name_from_apk)
         addElementCheckLocalized('summary', app, 'Summary', doc, apel)
 
         if app.icon:
             addElement('icon', app.icon, doc, apel)
 
         addElementCheckLocalized('desc', app, 'Description', doc, apel,
-                                 '<p>No description available</p>')
+                                 'No description available')
 
         addElement('license', app.License, doc, apel)
         if app.Categories:
@@ -439,7 +794,7 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
         if app.RequiresRoot:
             addElement('requirements', 'root', doc, apel)
 
-        # Sort the apk list into version order, just so the web site
+        # Sort the APK list into version order, just so the web site
         # doesn't have to do any work by default...
         apklist = sorted(apklist, key=lambda apk: apk['versionCode'], reverse=True)
 
@@ -466,10 +821,10 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
         for apk in apklist:
             file_extension = common.get_file_extension(apk['apkName'])
             # find the APK for the "Current Version"
-            if current_version_code < apk['versionCode']:
-                current_version_code = apk['versionCode']
             if current_version_code < int(app.CurrentVersionCode):
                 current_version_file = apk['apkName']
+            if current_version_code < apk['versionCode']:
+                current_version_code = apk['versionCode']
 
             apkel = doc.createElement("package")
             apel.appendChild(apkel)
@@ -477,7 +832,7 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
             versionName = apk.get('versionName')
             if not versionName:
                 versionCodeStr = str(apk['versionCode'])  # TODO build.versionCode should be int!
-                for build in app.builds:
+                for build in app.get('Builds', []):
                     if build['versionCode'] == versionCodeStr and 'versionName' in build:
                         versionName = build['versionName']
                         break
@@ -543,7 +898,12 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
                 and common.config['make_current_version_link'] \
                 and repodir == 'repo':  # only create these
             namefield = common.config['current_version_name_source']
-            sanitized_name = re.sub(b'''[ '"&%?+=/]''', b'', app.get(namefield).encode('utf-8'))
+            name = app.get(namefield)
+            if not name and namefield == 'Name':
+                name = app.get('localized', {}).get('en-US', {}).get('name')
+            if not name:
+                name = app.id
+            sanitized_name = re.sub(b'''[ '"&%?+=/]''', b'', name.encode('utf-8'))
             apklinkname = sanitized_name + os.path.splitext(current_version_file)[1].encode('utf-8')
             current_version_path = os.path.join(repodir, current_version_file).encode('utf-8', 'surrogateescape')
             if os.path.islink(apklinkname):
@@ -584,6 +944,7 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
         # Sign the index...
         signed = os.path.join(repodir, 'index.jar')
         if common.options.nosign:
+            _copy_to_local_copy_dir(repodir, os.path.join(repodir, jar_output))
             # Remove old signed index if not signing
             if os.path.exists(signed):
                 os.remove(signed)
@@ -598,11 +959,10 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
     if os.path.exists(repo_icon):
         shutil.copyfile(common.config['repo_icon'], iconfilename)
     else:
-        logging.warning(_('repo_icon %s does not exist, generating placeholder.')
+        logging.warning(_('repo_icon "repo/icons/%s" does not exist, generating placeholder.')
                         % repo_icon)
         os.makedirs(os.path.dirname(iconfilename), exist_ok=True)
         try:
-            import qrcode
             qrcode.make(common.config['repo_url']).save(iconfilename)
         except Exception:
             exampleicon = os.path.join(common.get_examples_dir(),
@@ -611,9 +971,12 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, fdroid_signing_key_fing
 
 
 def extract_pubkey():
-    """
-    Extracts and returns the repository's public key from the keystore.
-    :return: public key in hex, repository fingerprint
+    """Extract and return the repository's public key from the keystore.
+
+    Returns
+    -------
+    public key in hex
+    repository fingerprint
     """
     if 'repo_pubkey' in common.config:
         pubkey = unhexlify(common.config['repo_pubkey'])
@@ -637,7 +1000,7 @@ def extract_pubkey():
 
 
 def get_mirror_service_urls(url):
-    '''Get direct URLs from git service for use by fdroidclient
+    """Get direct URLs from git service for use by fdroidclient.
 
     Via 'servergitmirrors', fdroidserver can create and push a mirror
     to certain well known git services like gitlab or github.  This
@@ -645,10 +1008,9 @@ def get_mirror_service_urls(url):
     branch in git. The files are then accessible via alternate URLs,
     where they are served in their raw format via a CDN rather than
     from git.
-    '''
-
+    """
     if url.startswith('git@'):
-        url = re.sub(r'^git@(.*):(.*)', r'https://\1/\2', url)
+        url = re.sub(r'^git@([^:]+):(.+)', r'https://\1/\2', url)
 
     segments = url.split("/")
 
@@ -676,24 +1038,27 @@ def get_mirror_service_urls(url):
         # Gitlab-like Pages segments "https://user.gitlab.io/repo/folder"
         gitlab_pages = ["https:", "", user + ".gitlab.io", repo, folder]
         urls.append('/'.join(gitlab_pages))
-        # Gitlab Raw "https://gitlab.com/user/repo/raw/branch/folder"
-        gitlab_raw = segments + ['raw', branch, folder]
+        # GitLab Raw "https://gitlab.com/user/repo/-/raw/branch/folder"
+        gitlab_raw = segments + ['-', 'raw', branch, folder]
         urls.append('/'.join(gitlab_raw))
-        return urls
 
     return urls
 
 
 def download_repo_index(url_str, etag=None, verify_fingerprint=True, timeout=600):
-    """Downloads and verifies index file, then returns its data.
+    """Download and verifies index file, then returns its data.
 
     Downloads the repository index from the given :param url_str and
     verifies the repository's fingerprint if :param verify_fingerprint
     is not False.
 
-    :raises: VerificationException() if the repository could not be verified
+    Raises
+    ------
+    VerificationException() if the repository could not be verified
 
-    :return: A tuple consisting of:
+    Returns
+    -------
+    A tuple consisting of:
         - The index in JSON format or None if the index did not change
         - The new eTag as returned by the HTTP request
 
@@ -707,7 +1072,12 @@ def download_repo_index(url_str, etag=None, verify_fingerprint=True, timeout=600
             raise VerificationException(_("No fingerprint in URL."))
         fingerprint = query['fingerprint'][0]
 
-    url = urllib.parse.SplitResult(url.scheme, url.netloc, url.path + '/index-v1.jar', '', '')
+    if url.path.endswith('/index-v1.jar'):
+        path = url.path[:-13].rstrip('/')
+    else:
+        path = url.path.rstrip('/')
+
+    url = urllib.parse.SplitResult(url.scheme, url.netloc, path + '/index-v1.jar', '', '')
     download, new_etag = net.http_get(url.geturl(), etag, timeout)
 
     if download is None:
@@ -724,30 +1094,45 @@ def download_repo_index(url_str, etag=None, verify_fingerprint=True, timeout=600
 
 
 def get_index_from_jar(jarfile, fingerprint=None):
-    """Returns the data, public key, and fingerprint from index-v1.jar
+    """Return the data, public key, and fingerprint from index-v1.jar.
 
-    :raises: VerificationException() if the repository could not be verified
+    Parameters
+    ----------
+    fingerprint is the SHA-256 fingerprint of signing key. Only
+      hex digits count, all other chars will can be discarded.
+
+    Raises
+    ------
+    VerificationException() if the repository could not be verified
+
     """
-
     logging.debug(_('Verifying index signature:'))
     common.verify_jar_signature(jarfile)
     with zipfile.ZipFile(jarfile) as jar:
         public_key, public_key_fingerprint = get_public_key_from_jar(jar)
         if fingerprint is not None:
-            if fingerprint.upper() != public_key_fingerprint:
+            fingerprint = re.sub(r'[^0-9A-F]', r'', fingerprint.upper())
+            if fingerprint != public_key_fingerprint:
                 raise VerificationException(_("The repository's fingerprint does not match."))
         data = json.loads(jar.read('index-v1.json').decode())
         return data, public_key, public_key_fingerprint
 
 
 def get_public_key_from_jar(jar):
-    """
-    Get the public key and its fingerprint from a JAR file.
+    """Get the public key and its fingerprint from a JAR file.
 
-    :raises: VerificationException() if the JAR was not signed exactly once
+    Raises
+    ------
+    VerificationException() if the JAR was not signed exactly once
 
-    :param jar: a zipfile.ZipFile object
-    :return: the public key from the jar and its fingerprint
+    Parameters
+    ----------
+    jar
+      a zipfile.ZipFile object
+
+    Returns
+    -------
+    the public key from the jar and its fingerprint
     """
     # extract certificate from jar
     certs = [n for n in jar.namelist() if common.SIGNATURE_BLOCK_FILE_REGEX.match(n)]

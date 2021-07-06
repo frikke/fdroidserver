@@ -2,14 +2,17 @@
 
 # http://www.drdobbs.com/testing/unit-testing-with-python/240165163
 
+import copy
 import git
 import glob
 import inspect
+import json
 import logging
 import optparse
 import os
 import random
 import shutil
+import string
 import subprocess
 import sys
 import tempfile
@@ -18,8 +21,10 @@ import yaml
 import zipfile
 import textwrap
 from binascii import unhexlify
+from datetime import datetime
 from distutils.version import LooseVersion
 from testcommon import TmpCwd
+from unittest import mock
 
 try:
     from yaml import CSafeLoader as SafeLoader
@@ -38,7 +43,8 @@ except ImportError:
         from yaml import Loader as FullLoader
 
 localmodule = os.path.realpath(
-    os.path.join(os.path.dirname(inspect.getfile(inspect.currentframe())), '..'))
+    os.path.join(os.path.dirname(inspect.getfile(inspect.currentframe())), '..')
+)
 print('localmodule: ' + localmodule)
 if localmodule not in sys.path:
     sys.path.insert(0, localmodule)
@@ -50,11 +56,14 @@ import fdroidserver.update
 from fdroidserver.common import FDroidPopen
 
 
-DONATION_FIELDS = (
-    'Donate',
-    'Liberapay',
-    'OpenCollective',
-)
+DONATION_FIELDS = ('Donate', 'Liberapay', 'OpenCollective')
+
+
+class Options:
+    allow_disabled_algorithms = False
+    clean = False
+    pretty = True
+    rename_apks = False
 
 
 class UpdateTest(unittest.TestCase):
@@ -62,6 +71,11 @@ class UpdateTest(unittest.TestCase):
 
     def setUp(self):
         logging.basicConfig(level=logging.INFO)
+        logging.getLogger('androguard.axml').setLevel(logging.INFO)
+        logging.getLogger('androguard.core.api_specific_resources').setLevel(logging.INFO)
+        from PIL import PngImagePlugin
+
+        logging.getLogger(PngImagePlugin.__name__).setLevel(logging.INFO)
         self.basedir = os.path.join(localmodule, 'tests')
         self.tmpdir = os.path.abspath(os.path.join(self.basedir, '..', '.testfiles'))
         if not os.path.exists(self.tmpdir):
@@ -98,26 +112,31 @@ class UpdateTest(unittest.TestCase):
         shutil.copystat(testfile, cpfile)
 
         apps = dict()
-        for packageName in ('info.guardianproject.urzip', 'org.videolan.vlc', 'obb.mainpatch.current',
-                            'com.nextcloud.client', 'com.nextcloud.client.dev',
-                            'eu.siacs.conversations'):
+        for packageName in (
+            'info.guardianproject.urzip',
+            'org.videolan.vlc',
+            'obb.mainpatch.current',
+            'com.nextcloud.client',
+            'com.nextcloud.client.dev',
+            'eu.siacs.conversations',
+        ):
             apps[packageName] = fdroidserver.metadata.App()
             apps[packageName]['id'] = packageName
-            apps[packageName]['CurrentVersionCode'] = 0xcafebeef
+            apps[packageName]['CurrentVersionCode'] = 0xCAFEBEEF
 
         apps['info.guardianproject.urzip']['CurrentVersionCode'] = 100
 
         buildnextcloudclient = fdroidserver.metadata.Build()
         buildnextcloudclient.gradle = ['generic']
-        apps['com.nextcloud.client']['builds'] = [buildnextcloudclient]
+        apps['com.nextcloud.client']['Builds'] = [buildnextcloudclient]
 
         buildnextclouddevclient = fdroidserver.metadata.Build()
         buildnextclouddevclient.gradle = ['versionDev']
-        apps['com.nextcloud.client.dev']['builds'] = [buildnextclouddevclient]
+        apps['com.nextcloud.client.dev']['Builds'] = [buildnextclouddevclient]
 
         build_conversations = fdroidserver.metadata.Build()
         build_conversations.gradle = ['free']
-        apps['eu.siacs.conversations']['builds'] = [build_conversations]
+        apps['eu.siacs.conversations']['Builds'] = [build_conversations]
 
         fdroidserver.update.insert_localized_app_metadata(apps)
 
@@ -167,6 +186,140 @@ class UpdateTest(unittest.TestCase):
             elif packageName == 'eu.siacs.conversations':
                 self.assertEqual('Conversations', app['localized']['en-US']['name'])
 
+    def test_name_title_scraping(self):
+        """metadata file --> fdroiddata localized files --> fastlane/triple-t in app source --> APK"""
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.update.config = config
+        os.chdir(os.path.join(localmodule, 'tests'))
+        fdroidserver.update.options = type('', (), {})()
+        fdroidserver.update.options.clean = True
+        fdroidserver.update.options.delete_unknown = True
+        fdroidserver.update.options.rename_apks = False
+        fdroidserver.update.options.allow_disabled_algorithms = False
+
+        apps = fdroidserver.metadata.read_metadata()
+        knownapks = fdroidserver.common.KnownApks()
+        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', knownapks, False)
+        fdroidserver.update.insert_localized_app_metadata(apps)
+        fdroidserver.update.apply_info_from_latest_apk(apps, apks)
+        app = apps['info.guardianproject.urzip']
+        self.assertIsNone(app.Name)
+        self.assertTrue('localized' in app)
+        self.assertEqual('title', app['localized']['en-US']['name'])
+        app = apps['org.videolan.vlc']
+        self.assertIsNone(app.Name)
+        self.assertTrue('localized' in app)
+        self.assertFalse('name' in app['localized']['en-US'])
+        app = apps['info.guardianproject.checkey']
+        self.assertEqual('Checkey the app!', app.Name)
+        self.assertTrue('localized' in app)
+        self.assertEqual('Checkey: info on local apps', app['localized']['en-US']['name'])
+        self.assertEqual('Checkey: ローカルアプリの情報', app['localized']['ja-JP']['name'])
+        app = apps['org.adaway']
+        self.assertIsNone(app.Name)
+        self.assertFalse('localized' in app)
+        app = apps['obb.main.twoversions']
+        self.assertIsNone(app.Name)
+        self.assertFalse('localized' in app)
+
+    def test_insert_missing_app_names_from_apks(self):
+        """en-US serves as the final, default, fallback value with index-v1"""
+        testvalue = 'TESTVALUE!'
+        apps = {
+            'none': {},
+            'name': {'Name': testvalue},
+            'onlyapk': {'Name': None},
+            'autoname': {'AutoName': 'autoname', 'Name': None},
+            'onlylocalized': {'localized': {'en-US': {'name': testvalue}}},
+            'non_en_us_localized': {'localized': {'de-AT': {'name': 'leiwand'}}},
+            'apks': {},
+        }
+        apks = [
+            {'packageName': 'none', 'name': '', 'versionCode': 1},
+            {'packageName': 'name', 'name': 'fromapk', 'versionCode': 1},
+            {'packageName': 'onlyapk', 'name': testvalue, 'versionCode': 1},
+            {'packageName': 'autoname', 'name': testvalue, 'versionCode': 1},
+            {'packageName': 'onlylocalized', 'name': 'fromapk', 'versionCode': 1},
+            {'packageName': 'non_en_us_localized', 'name': testvalue, 'versionCode': 0xcafe},
+            {'packageName': 'apks', 'name': 'fromapk1', 'versionCode': 1},
+            {'packageName': 'apks', 'name': 'fromapk2', 'versionCode': 2},
+            {'packageName': 'apks', 'name': testvalue, 'versionCode': 3},
+        ]
+        fdroidserver.update.insert_missing_app_names_from_apks(apps, apks)
+        for appid, app in apps.items():
+            if appid == 'none':
+                self.assertIsNone(app.get('Name'))
+                self.assertIsNone(app.get('localized'))
+            elif appid == 'onlyapk':
+                self.assertIsNone(app.get('Name'))
+                self.assertEqual(testvalue, app['localized']['en-US']['name'])
+            elif appid == 'autoname':
+                self.assertIsNone(app.get('Name'))
+                self.assertEqual(testvalue, app['localized']['en-US']['name'])
+            elif appid == 'onlylocalized':
+                self.assertIsNone(app.get('Name'))
+                self.assertEqual(testvalue, app['localized']['en-US']['name'])
+            elif appid == 'non_en_us_localized':
+                self.assertIsNone(app.get('Name'))
+                self.assertEqual(testvalue, app['localized']['en-US']['name'])
+            elif appid == 'name':
+                self.assertEqual(testvalue, app['Name'])
+                self.assertIsNone(app.get('localized'))
+            elif appid == 'apks':
+                self.assertIsNone(app.get('Name'))
+                self.assertEqual(testvalue, app['localized']['en-US']['name'])
+
+    def test_insert_missing_app_names_from_apks_from_repo(self):
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.update.config = config
+        fdroidserver.update.options = type('', (), {})()
+        fdroidserver.update.options.clean = True
+        fdroidserver.update.options.delete_unknown = True
+        fdroidserver.update.options.rename_apks = False
+        fdroidserver.update.options.allow_disabled_algorithms = False
+
+        apps = fdroidserver.metadata.read_metadata()
+        knownapks = fdroidserver.common.KnownApks()
+        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', knownapks, False)
+
+        appid = 'info.guardianproject.checkey'
+        testapps = {appid: copy.copy(apps[appid])}
+        self.assertEqual('Checkey the app!', testapps[appid]['Name'])
+        del (testapps[appid]['Name'])
+        fdroidserver.update.insert_missing_app_names_from_apks(testapps, apks)
+        self.assertIsNone(testapps[appid].get('Name'))
+
+        repoapps = fdroidserver.update.prepare_apps(apps, apks, 'repo')
+        fdroidserver.update.insert_missing_app_names_from_apks(repoapps, apks)
+        self.assertIsNone(repoapps['com.politedroid']['Name'])
+        self.assertEqual('Polite Droid',
+                         repoapps['com.politedroid']['localized']['en-US']['name'])
+        self.assertEqual('Duplicate Permisssions', repoapps['duplicate.permisssions']['Name'])
+        self.assertEqual('Caffeine Tile', repoapps['info.zwanenburg.caffeinetile']['Name'])
+        self.assertEqual('No minSdkVersion or targetSdkVersion', repoapps['no.min.target.sdk']['Name'])
+        self.assertIsNone(repoapps['obb.main.oldversion'].get('Name'))
+        self.assertEqual('OBB Main Old Version',
+                         repoapps['obb.main.oldversion']['localized']['en-US']['name'])
+        self.assertIsNone(repoapps['obb.main.twoversions'].get('Name'))
+        self.assertEqual('OBB Main Two Versions',
+                         repoapps['obb.main.twoversions']['localized']['en-US']['name'])
+        self.assertIsNone(repoapps['souch.smsbypass'].get('Name'))
+        self.assertEqual('Battery level',
+                         repoapps['souch.smsbypass']['localized']['en-US']['name'])
+        self.assertIsNone(repoapps['info.guardianproject.urzip'].get('Name'))
+        self.assertEqual('title',
+                         repoapps['info.guardianproject.urzip']['localized']['en-US']['name'])
+        self.assertIsNone(repoapps['obb.mainpatch.current'].get('Name'))
+
+        del(repoapps['info.guardianproject.urzip']['localized'])
+        fdroidserver.update.insert_missing_app_names_from_apks(repoapps, apks)
+        self.assertEqual('urzip-πÇÇπÇÇ现代汉语通用字-български-عربي1234',
+                         repoapps['info.guardianproject.urzip']['localized']['en-US']['name'])
+
     def test_insert_triple_t_metadata(self):
         importer = os.path.join(self.basedir, 'tmp', 'importer')
         packageName = 'org.fdroid.ci.test.app'
@@ -198,7 +351,7 @@ class UpdateTest(unittest.TestCase):
         fdroidserver.update.options = fdroidserver.common.options
         os.chdir(tmptestsdir)
 
-        apps = fdroidserver.metadata.read_metadata(xref=True)
+        apps = fdroidserver.metadata.read_metadata()
         fdroidserver.update.copy_triple_t_store_metadata(apps)
 
         # TODO ideally, this would compare the whole dict like in metadata.TestCase's test_read_metadata()
@@ -217,8 +370,9 @@ class UpdateTest(unittest.TestCase):
 
     def test_insert_triple_t_2_metadata(self):
         packageName = 'org.piwigo.android'
-        tmptestsdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name,
-                                       dir=self.tmpdir)
+        tmptestsdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         os.rmdir(tmptestsdir)
         shutil.copytree(os.path.join(self.basedir, 'triple-t-2'), tmptestsdir)
         os.chdir(tmptestsdir)
@@ -229,7 +383,7 @@ class UpdateTest(unittest.TestCase):
         fdroidserver.update.config = config
         fdroidserver.update.options = fdroidserver.common.options
 
-        apps = fdroidserver.metadata.read_metadata(xref=True)
+        apps = fdroidserver.metadata.read_metadata()
         self.assertTrue(packageName in apps)
         fdroidserver.update.copy_triple_t_store_metadata(apps)
         correctlocales = ['de-DE', 'en-US', 'fr-FR', 'kn-IN']
@@ -255,17 +409,42 @@ class UpdateTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join('de-DE', 'phoneScreenshots', '01_Login.jpg')))
         self.assertFalse(os.path.exists(os.path.join('de-DE', 'sevenInchScreenshots', '01_Login.png')))
 
+    def test_insert_triple_t_multiple_metadata(self):
+        namespace = 'ch.admin.bag.covidcertificate.'
+        packages = ('verifier', 'wallet')
+        names = dict(verifier='COVID Certificate Check', wallet='COVID Certificate')
+
+        tmptestsdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
+        os.rmdir(tmptestsdir)
+        shutil.copytree(os.path.join(self.basedir, 'triple-t-multiple'), tmptestsdir)
+        os.chdir(tmptestsdir)
+
+        for p in packages:
+            packageName = namespace + p
+            config = dict()
+            fdroidserver.common.fill_config_defaults(config)
+            fdroidserver.common.config = config
+            fdroidserver.update.config = config
+            fdroidserver.update.options = fdroidserver.common.options
+
+            apps = fdroidserver.metadata.read_metadata()
+            self.assertTrue(packageName in apps)
+            fdroidserver.update.copy_triple_t_store_metadata(apps)
+            app = apps[packageName]
+            self.assertEqual(app['localized']['en-US']['name'], names[p])
+
     def javagetsig(self, apkfile):
         getsig_dir = 'getsig'
-        if not os.path.exists(getsig_dir + "/getsig.class"):
+        if not os.path.exists(os.path.join(getsig_dir, "getsig.class")):
             logging.critical("getsig.class not found. To fix: cd '%s' && ./make.sh" % getsig_dir)
             sys.exit(1)
         # FDroidPopen needs some config to work
         config = dict()
         fdroidserver.common.fill_config_defaults(config)
         fdroidserver.common.config = config
-        p = FDroidPopen(['java', '-cp', 'getsig',
-                         'getsig', apkfile])
+        p = FDroidPopen(['java', '-cp', 'getsig', 'getsig', apkfile])
         sig = None
         for line in p.output.splitlines():
             if line.startswith('Result:'):
@@ -359,7 +538,9 @@ class UpdateTest(unittest.TestCase):
 
     def testScanApksAndObbs(self):
         os.chdir(os.path.join(localmodule, 'tests'))
-        testdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir)
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         os.chdir(testdir)
         shutil.copytree(os.path.join(self.basedir, 'repo'), 'repo')
         shutil.copytree(os.path.join(self.basedir, 'metadata'), 'metadata')
@@ -375,7 +556,7 @@ class UpdateTest(unittest.TestCase):
         fdroidserver.update.options.rename_apks = False
         fdroidserver.update.options.allow_disabled_algorithms = False
 
-        apps = fdroidserver.metadata.read_metadata(xref=True)
+        apps = fdroidserver.metadata.read_metadata()
         knownapks = fdroidserver.common.KnownApks()
         apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', knownapks, False)
         self.assertEqual(len(apks), 17)
@@ -417,7 +598,9 @@ class UpdateTest(unittest.TestCase):
     def test_apkcache_json(self):
         """test the migration from pickle to json"""
         os.chdir(os.path.join(localmodule, 'tests'))
-        testdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir)
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         os.chdir(testdir)
         shutil.copytree(os.path.join(self.basedir, 'repo'), 'repo')
         config = dict()
@@ -432,7 +615,7 @@ class UpdateTest(unittest.TestCase):
         fdroidserver.update.options.rename_apks = False
         fdroidserver.update.options.allow_disabled_algorithms = False
 
-        fdroidserver.metadata.read_metadata(xref=True)
+        fdroidserver.metadata.read_metadata()
         knownapks = fdroidserver.common.KnownApks()
         apkcache = fdroidserver.update.get_cache()
         self.assertEqual(2, len(apkcache))
@@ -452,104 +635,129 @@ class UpdateTest(unittest.TestCase):
         reset = fdroidserver.update.get_cache()
         self.assertEqual(2, len(reset))
 
+    def test_scan_repo_files(self):
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.update.config = config
+
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
+        os.chdir(testdir)
+        os.mkdir('repo')
+        os.mkdir('stats')
+        with open(os.path.join('stats', 'known_apks.txt'), 'w') as fp:
+            fp.write('se.manyver_30.apk se.manyver 2018-10-10\n')
+        filename = 'Norway_bouvet_europe_2.obf.zip'
+        shutil.copy(os.path.join(self.basedir, filename), 'repo')
+        knownapks = fdroidserver.common.KnownApks()
+        files, fcachechanged = fdroidserver.update.scan_repo_files(dict(), 'repo', knownapks, False)
+        knownapks.writeifchanged()
+        self.assertTrue(fcachechanged)
+
+        info = files[0]
+        self.assertEqual(filename, info['apkName'])
+        self.assertEqual(datetime, type(info['added']))
+        self.assertEqual(os.path.getsize(os.path.join('repo', filename)), info['size'])
+        self.assertEqual(
+            '531190bdbc07e77d5577249949106f32dac7f62d38d66d66c3ae058be53a729d',
+            info['hash'],
+        )
+
+    def test_read_added_date_from_all_apks(self):
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.update.config = config
+        fdroidserver.update.options = Options
+        os.chdir(os.path.join(localmodule, 'tests'))
+        apps = fdroidserver.metadata.read_metadata()
+        knownapks = fdroidserver.common.KnownApks()
+        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', knownapks)
+        fdroidserver.update.read_added_date_from_all_apks(apps, apks)
+
+    def test_apply_info_from_latest_apk(self):
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.update.config = config
+        fdroidserver.update.options = Options
+        os.chdir(os.path.join(localmodule, 'tests'))
+        apps = fdroidserver.metadata.read_metadata()
+        knownapks = fdroidserver.common.KnownApks()
+        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', knownapks)
+        fdroidserver.update.apply_info_from_latest_apk(apps, apks)
+
     def test_scan_apk(self):
         config = dict()
         fdroidserver.common.fill_config_defaults(config)
         fdroidserver.common.config = config
         fdroidserver.update.config = config
         os.chdir(os.path.join(localmodule, 'tests'))
-        try:
-            config['aapt'] = fdroidserver.common.find_sdk_tools_cmd('aapt')
-        except fdroidserver.exception.FDroidException:
-            pass  # aapt is not required if androguard is present
 
-        for use_androguard in (True, False):
-            if use_androguard:
-                try:
-                    import androguard
-                    androguard
-
-                    def func():
-                        return True
-                    fdroidserver.common.use_androguard = func
-                except ImportError:
-                    continue
-            else:
-                if 'aapt' in config:
-                    def func():
-                        return False
-                    fdroidserver.common.use_androguard = func
-                else:
-                    continue
-
-            print('USE_ANDROGUARD', use_androguard)
-
-            apksigner = fdroidserver.common.find_apksigner()
-            if apksigner:
-                if use_androguard:  # v2 parsing needs both
-                    config['apksigner'] = apksigner
-                    apk_info = fdroidserver.update.scan_apk('v2.only.sig_2.apk')
-                    self.assertIsNone(apk_info.get('maxSdkVersion'))
-                    self.assertEqual(apk_info.get('versionName'), 'v2-only')
-                    self.assertEqual(apk_info.get('versionCode'), 2)
-            else:
-                print('WARNING: skipping v2-only test since apksigner cannot be found')
-            apk_info = fdroidserver.update.scan_apk('repo/v1.v2.sig_1020.apk')
+        if 'apksigner' in config:
+            apk_info = fdroidserver.update.scan_apk('v2.only.sig_2.apk')
             self.assertIsNone(apk_info.get('maxSdkVersion'))
-            self.assertEqual(apk_info.get('versionName'), 'v1+2')
-            self.assertEqual(apk_info.get('versionCode'), 1020)
+            self.assertEqual(apk_info.get('versionName'), 'v2-only')
+            self.assertEqual(apk_info.get('versionCode'), 2)
+        else:
+            print('WARNING: skipping v2-only test since apksigner cannot be found')
+        apk_info = fdroidserver.update.scan_apk('repo/v1.v2.sig_1020.apk')
+        self.assertIsNone(apk_info.get('maxSdkVersion'))
+        self.assertEqual(apk_info.get('versionName'), 'v1+2')
+        self.assertEqual(apk_info.get('versionCode'), 1020)
 
-            apk_info = fdroidserver.update.scan_apk('repo/souch.smsbypass_9.apk')
-            self.assertIsNone(apk_info.get('maxSdkVersion'))
-            self.assertEqual(apk_info.get('versionName'), '0.9')
+        apk_info = fdroidserver.update.scan_apk('repo/souch.smsbypass_9.apk')
+        self.assertIsNone(apk_info.get('maxSdkVersion'))
+        self.assertEqual(apk_info.get('versionName'), '0.9')
 
-            apk_info = fdroidserver.update.scan_apk('repo/duplicate.permisssions_9999999.apk')
-            self.assertEqual(apk_info.get('versionName'), '')
-            self.assertEqual(apk_info['icons_src'], {'160': 'res/drawable/ic_launcher.png',
-                                                     '-1': 'res/drawable/ic_launcher.png'})
+        apk_info = fdroidserver.update.scan_apk('repo/duplicate.permisssions_9999999.apk')
+        self.assertEqual(apk_info.get('versionName'), '')
+        self.assertEqual(apk_info['icons_src'], {'160': 'res/drawable/ic_launcher.png',
+                                                 '-1': 'res/drawable/ic_launcher.png'})
 
-            apk_info = fdroidserver.update.scan_apk('org.dyndns.fules.ck_20.apk')
-            self.assertEqual(apk_info['icons_src'], {'240': 'res/drawable-hdpi-v4/icon_launcher.png',
-                                                     '120': 'res/drawable-ldpi-v4/icon_launcher.png',
-                                                     '160': 'res/drawable-mdpi-v4/icon_launcher.png',
-                                                     '-1': 'res/drawable-mdpi-v4/icon_launcher.png'})
-            self.assertEqual(apk_info['icons'], {})
-            self.assertEqual(apk_info['features'], [])
-            self.assertEqual(apk_info['antiFeatures'], set())
-            self.assertEqual(apk_info['versionName'], 'v1.6pre2')
-            self.assertEqual(apk_info['hash'],
-                             '897486e1f857c6c0ee32ccbad0e1b8cd82f6d0e65a44a23f13f852d2b63a18c8')
-            self.assertEqual(apk_info['packageName'], 'org.dyndns.fules.ck')
-            self.assertEqual(apk_info['versionCode'], 20)
-            self.assertEqual(apk_info['size'], 132453)
-            self.assertEqual(apk_info['nativecode'],
-                             ['arm64-v8a', 'armeabi', 'armeabi-v7a', 'mips', 'mips64', 'x86', 'x86_64'])
-            self.assertEqual(apk_info['minSdkVersion'], 7)
-            self.assertEqual(apk_info['sig'], '9bf7a6a67f95688daec75eab4b1436ac')
-            self.assertEqual(apk_info['hashType'], 'sha256')
-            self.assertEqual(apk_info['targetSdkVersion'], 8)
+        apk_info = fdroidserver.update.scan_apk('org.dyndns.fules.ck_20.apk')
+        self.assertEqual(apk_info['icons_src'], {'240': 'res/drawable-hdpi-v4/icon_launcher.png',
+                                                 '120': 'res/drawable-ldpi-v4/icon_launcher.png',
+                                                 '160': 'res/drawable-mdpi-v4/icon_launcher.png',
+                                                 '-1': 'res/drawable-mdpi-v4/icon_launcher.png'})
+        self.assertEqual(apk_info['icons'], {})
+        self.assertEqual(apk_info['features'], [])
+        self.assertEqual(apk_info['antiFeatures'], set())
+        self.assertEqual(apk_info['versionName'], 'v1.6pre2')
+        self.assertEqual(apk_info['hash'],
+                         '897486e1f857c6c0ee32ccbad0e1b8cd82f6d0e65a44a23f13f852d2b63a18c8')
+        self.assertEqual(apk_info['packageName'], 'org.dyndns.fules.ck')
+        self.assertEqual(apk_info['versionCode'], 20)
+        self.assertEqual(apk_info['size'], 132453)
+        self.assertEqual(apk_info['nativecode'],
+                         ['arm64-v8a', 'armeabi', 'armeabi-v7a', 'mips', 'mips64', 'x86', 'x86_64'])
+        self.assertEqual(apk_info['minSdkVersion'], 7)
+        self.assertEqual(apk_info['sig'], '9bf7a6a67f95688daec75eab4b1436ac')
+        self.assertEqual(apk_info['hashType'], 'sha256')
+        self.assertEqual(apk_info['targetSdkVersion'], 8)
 
-            apk_info = fdroidserver.update.scan_apk('org.bitbucket.tickytacky.mirrormirror_4.apk')
-            self.assertEqual(apk_info.get('versionName'), '1.0.3')
-            self.assertEqual(apk_info['icons_src'], {'160': 'res/drawable-mdpi/mirror.png',
-                                                     '-1': 'res/drawable-mdpi/mirror.png'})
+        apk_info = fdroidserver.update.scan_apk('org.bitbucket.tickytacky.mirrormirror_4.apk')
+        self.assertEqual(apk_info.get('versionName'), '1.0.3')
+        self.assertEqual(apk_info['icons_src'], {'160': 'res/drawable-mdpi/mirror.png',
+                                                 '-1': 'res/drawable-mdpi/mirror.png'})
 
-            apk_info = fdroidserver.update.scan_apk('repo/info.zwanenburg.caffeinetile_4.apk')
-            self.assertEqual(apk_info.get('versionName'), '1.3')
-            self.assertEqual(apk_info['icons_src'], {'160': 'res/drawable/ic_coffee_on.xml',
-                                                     '-1': 'res/drawable/ic_coffee_on.xml'})
+        apk_info = fdroidserver.update.scan_apk('repo/info.zwanenburg.caffeinetile_4.apk')
+        self.assertEqual(apk_info.get('versionName'), '1.3')
+        self.assertEqual(apk_info['icons_src'], {})
 
-            apk_info = fdroidserver.update.scan_apk('repo/com.politedroid_6.apk')
-            self.assertEqual(apk_info.get('versionName'), '1.5')
-            self.assertEqual(apk_info['icons_src'], {'120': 'res/drawable-ldpi-v4/icon.png',
-                                                     '160': 'res/drawable-mdpi-v4/icon.png',
-                                                     '240': 'res/drawable-hdpi-v4/icon.png',
-                                                     '320': 'res/drawable-xhdpi-v4/icon.png',
-                                                     '-1': 'res/drawable-mdpi-v4/icon.png'})
+        apk_info = fdroidserver.update.scan_apk('repo/com.politedroid_6.apk')
+        self.assertEqual(apk_info.get('versionName'), '1.5')
+        self.assertEqual(apk_info['icons_src'], {'120': 'res/drawable-ldpi-v4/icon.png',
+                                                 '160': 'res/drawable-mdpi-v4/icon.png',
+                                                 '240': 'res/drawable-hdpi-v4/icon.png',
+                                                 '320': 'res/drawable-xhdpi-v4/icon.png',
+                                                 '-1': 'res/drawable-mdpi-v4/icon.png'})
 
-            apk_info = fdroidserver.update.scan_apk('SpeedoMeterApp.main_1.apk')
-            self.assertEqual(apk_info.get('versionName'), '1.0')
-            self.assertEqual(apk_info['icons_src'], {})
+        apk_info = fdroidserver.update.scan_apk('SpeedoMeterApp.main_1.apk')
+        self.assertEqual(apk_info.get('versionName'), '1.0')
+        self.assertEqual(apk_info['icons_src'], {})
 
     def test_scan_apk_no_min_target(self):
         config = dict()
@@ -594,8 +802,23 @@ class UpdateTest(unittest.TestCase):
         with self.assertRaises(fdroidserver.exception.BuildException):
             fdroidserver.update.scan_apk('urzip-release-unsigned.apk')
 
-    def test_process_apk(self):
+    def test_scan_apk_bad_zip(self):
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.update.config = config
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
+        os.chdir(testdir)
+        os.mkdir('repo')
+        apkfile = 'repo/badzip_1.apk'
+        with open(apkfile, 'w') as fp:
+            fp.write('this is not a zip file')
+        with self.assertRaises(fdroidserver.exception.BuildException):
+            fdroidserver.update.scan_apk(apkfile)
 
+    def test_process_apk(self):
         def _build_yaml_representer(dumper, data):
             '''Creates a YAML representation of a Build instance'''
             return dumper.represent_dict(data)
@@ -625,10 +848,9 @@ class UpdateTest(unittest.TestCase):
             _, apk, cachechanged = fdroidserver.update.process_apk({}, apkName, 'repo', knownapks,
                                                                    False)
             # Don't care about the date added to the repo and relative apkName
+            self.assertEqual(datetime, type(apk['added']))
             del apk['added']
             del apk['apkName']
-            # avoid AAPT application name bug
-            del apk['name']
 
             # ensure that icons have been extracted properly
             if apkName == '../urzip.apk':
@@ -636,8 +858,9 @@ class UpdateTest(unittest.TestCase):
             if apkName == '../org.dyndns.fules.ck_20.apk':
                 self.assertEqual(apk['icon'], 'org.dyndns.fules.ck.20.png')
             for density in fdroidserver.update.screen_densities:
-                icon_path = os.path.join(fdroidserver.update.get_icon_dir('repo', density),
-                                         apk['icon'])
+                icon_path = os.path.join(
+                    fdroidserver.update.get_icon_dir('repo', density), apk['icon']
+                )
                 self.assertTrue(os.path.isfile(icon_path))
                 self.assertTrue(os.path.getsize(icon_path) > 1)
 
@@ -647,8 +870,17 @@ class UpdateTest(unittest.TestCase):
             #     yaml.add_representer(fdroidserver.metadata.Build, _build_yaml_representer)
             #     yaml.dump(apk, f, default_flow_style=False)
 
+            # CFullLoader doesn't always work
+            # https://github.com/yaml/pyyaml/issues/266#issuecomment-559116876
+            TestLoader = FullLoader
+            try:
+                testyaml = '- !!python/object/new:fdroidserver.update.UsesPermission\n  - test\n  - null'
+                from_yaml = yaml.load(testyaml, Loader=TestLoader)
+            except yaml.constructor.ConstructorError:
+                from yaml import UnsafeLoader as TestLoader
+
             with open(savepath, 'r') as f:
-                from_yaml = yaml.load(f, Loader=FullLoader)
+                from_yaml = yaml.load(f, Loader=TestLoader)
             self.maxDiff = None
             self.assertEqual(apk, from_yaml)
 
@@ -670,8 +902,9 @@ class UpdateTest(unittest.TestCase):
 
         knownapks = fdroidserver.common.KnownApks()
 
-        tmptestsdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name,
-                                       dir=self.tmpdir)
+        tmptestsdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         print('tmptestsdir', tmptestsdir)
         os.chdir(tmptestsdir)
         os.mkdir('repo')
@@ -680,7 +913,7 @@ class UpdateTest(unittest.TestCase):
         fdroidserver.update.process_apks({}, 'repo', knownapks)
         fdroidserver.update.process_apks({}, 'archive', knownapks)
 
-        disabledsigs = ['org.bitbucket.tickytacky.mirrormirror_2.apk', ]
+        disabledsigs = ['org.bitbucket.tickytacky.mirrormirror_2.apk']
         for apkName in disabledsigs:
             shutil.copy(os.path.join(self.basedir, apkName),
                         os.path.join(tmptestsdir, 'repo'))
@@ -771,7 +1004,9 @@ class UpdateTest(unittest.TestCase):
 
     def test_translate_per_build_anti_features(self):
         os.chdir(os.path.join(localmodule, 'tests'))
-        testdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir)
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         os.chdir(testdir)
         shutil.copytree(os.path.join(self.basedir, 'repo'), 'repo')
         shutil.copytree(os.path.join(self.basedir, 'metadata'), 'metadata')
@@ -787,7 +1022,7 @@ class UpdateTest(unittest.TestCase):
         fdroidserver.update.options.rename_apks = False
         fdroidserver.update.options.allow_disabled_algorithms = False
 
-        apps = fdroidserver.metadata.read_metadata(xref=True)
+        apps = fdroidserver.metadata.read_metadata()
         knownapks = fdroidserver.common.KnownApks()
         apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', knownapks, False)
         fdroidserver.update.translate_per_build_anti_features(apps, apks)
@@ -802,8 +1037,9 @@ class UpdateTest(unittest.TestCase):
         self.assertTrue(foundtest)
 
     def test_create_metadata_from_template(self):
-        tmptestsdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name,
-                                       dir=self.tmpdir)
+        tmptestsdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         print('tmptestsdir', tmptestsdir)
         os.chdir(tmptestsdir)
         os.mkdir('repo')
@@ -830,16 +1066,16 @@ class UpdateTest(unittest.TestCase):
         testfile = 'metadata/info.guardianproject.urzip.yml'
         # create empty 0 byte .yml file, run read_metadata, it should work
         open(testfile, 'a').close()
-        apps = fdroidserver.metadata.read_metadata(xref=True)
+        apps = fdroidserver.metadata.read_metadata()
         self.assertEqual(1, len(apps))
         os.remove(testfile)
 
         # test using internal template
-        apps = fdroidserver.metadata.read_metadata(xref=True)
+        apps = fdroidserver.metadata.read_metadata()
         self.assertEqual(0, len(apps))
         fdroidserver.update.create_metadata_from_template(apk)
         self.assertTrue(os.path.exists(testfile))
-        apps = fdroidserver.metadata.read_metadata(xref=True)
+        apps = fdroidserver.metadata.read_metadata()
         self.assertEqual(1, len(apps))
         for app in apps.values():
             self.assertEqual('urzip', app['Name'])
@@ -852,7 +1088,7 @@ class UpdateTest(unittest.TestCase):
         shutil.copy(os.path.join(localmodule, 'examples', 'template.yml'), tmptestsdir)
         fdroidserver.update.create_metadata_from_template(apk)
         self.assertTrue(os.path.exists(testfile))
-        apps = fdroidserver.metadata.read_metadata(xref=True)
+        apps = fdroidserver.metadata.read_metadata()
         self.assertEqual(1, len(apps))
         for app in apps.values():
             self.assertEqual('urzip', app['Name'])
@@ -904,8 +1140,9 @@ class UpdateTest(unittest.TestCase):
         assert icons_src == {}
 
     def test_strip_and_copy_image(self):
-        tmptestsdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name,
-                                       dir=self.tmpdir)
+        tmptestsdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
 
         in_file = os.path.join(self.basedir, 'metadata', 'info.guardianproject.urzip', 'en-US', 'images', 'icon.png')
         out_file = os.path.join(tmptestsdir, 'icon.png')
@@ -922,7 +1159,9 @@ class UpdateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir, TmpCwd(tmpdir):
             os.mkdir('metadata')
             with open('template.yml', 'w') as f:
-                f.write(textwrap.dedent('''\
+                f.write(
+                    textwrap.dedent(
+                        '''\
                     Disabled:
                     License:
                     AuthorName:
@@ -956,51 +1195,60 @@ class UpdateTest(unittest.TestCase):
                     CurrentVersion:
                     CurrentVersionCode:
                     NoSourceSince:
-                    '''))
+                    '''
+                    )
+                )
             fdroidserver.update.create_metadata_from_template(apk)
             with open(os.path.join('metadata', 'rocks.janicerand.yml')) as f:
                 metadata_content = yaml.load(f, Loader=SafeLoader)
                 self.maxDiff = None
-                self.assertDictEqual(metadata_content,
-                                     {'ArchivePolicy': '',
-                                      'AuthorEmail': '',
-                                      'AuthorName': '',
-                                      'AuthorWebSite': '',
-                                      'AutoName': 'rocks.janicerand',
-                                      'AutoUpdateMode': '',
-                                      'Binaries': '',
-                                      'Bitcoin': '',
-                                      'Builds': '',
-                                      'Changelog': '',
-                                      'CurrentVersion': '',
-                                      'CurrentVersionCode': '',
-                                      'Disabled': '',
-                                      'Donate': '',
-                                      'FlattrID': '',
-                                      'IssueTracker': '',
-                                      'LiberapayID': '',
-                                      'License': '',
-                                      'Litecoin': '',
-                                      'Name': 'rocks.janicerand',
-                                      'NoSourceSince': '',
-                                      'Repo': '',
-                                      'RepoType': '',
-                                      'RequiresRoot': '',
-                                      'SourceCode': '',
-                                      'Summary': 'rocks.janicerand',
-                                      'Translation': '',
-                                      'UpdateCheckData': '',
-                                      'UpdateCheckIgnore': '',
-                                      'UpdateCheckMode': '',
-                                      'UpdateCheckName': '',
-                                      'VercodeOperation': '',
-                                      'WebSite': ''})
+                self.assertDictEqual(
+                    metadata_content,
+                    {
+                        'ArchivePolicy': '',
+                        'AuthorEmail': '',
+                        'AuthorName': '',
+                        'AuthorWebSite': '',
+                        'AutoName': 'rocks.janicerand',
+                        'AutoUpdateMode': '',
+                        'Binaries': '',
+                        'Bitcoin': '',
+                        'Builds': '',
+                        'Changelog': '',
+                        'CurrentVersion': '',
+                        'CurrentVersionCode': '',
+                        'Disabled': '',
+                        'Donate': '',
+                        'FlattrID': '',
+                        'IssueTracker': '',
+                        'LiberapayID': '',
+                        'License': '',
+                        'Litecoin': '',
+                        'Name': 'rocks.janicerand',
+                        'NoSourceSince': '',
+                        'Repo': '',
+                        'RepoType': '',
+                        'RequiresRoot': '',
+                        'SourceCode': '',
+                        'Summary': 'rocks.janicerand',
+                        'Translation': '',
+                        'UpdateCheckData': '',
+                        'UpdateCheckIgnore': '',
+                        'UpdateCheckMode': '',
+                        'UpdateCheckName': '',
+                        'VercodeOperation': '',
+                        'WebSite': '',
+                    },
+                )
 
     def test_insert_funding_yml_donation_links(self):
-        testdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir)
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         os.chdir(testdir)
         os.mkdir('build')
-        content = textwrap.dedent("""
+        content = textwrap.dedent(
+            """
             community_bridge: ''
             custom: [LINK1, LINK2]
             github: USERNAME
@@ -1010,7 +1258,8 @@ class UpdateTest(unittest.TestCase):
             open_collective: USERNAME
             otechie: USERNAME
             patreon: USERNAME
-        """)
+        """
+        )
         app = fdroidserver.metadata.App()
         app.id = 'fake.app.id'
         apps = {app.id: app}
@@ -1037,7 +1286,9 @@ class UpdateTest(unittest.TestCase):
 
     def test_insert_funding_yml_donation_links_one_at_a_time(self):
         """Exercise the FUNDING.yml code one entry at a time"""
-        testdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir)
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         os.chdir(testdir)
         os.mkdir('build')
 
@@ -1049,7 +1300,8 @@ class UpdateTest(unittest.TestCase):
         for field in DONATION_FIELDS:
             self.assertIsNone(app.get(field))
 
-        content = textwrap.dedent("""
+        content = textwrap.dedent(
+            """
             community_bridge: 'blah-de-blah'
             github: USERNAME
             issuehunt: USERNAME
@@ -1057,7 +1309,8 @@ class UpdateTest(unittest.TestCase):
             liberapay: USERNAME
             open_collective: USERNAME
             patreon: USERNAME
-        """)
+        """
+        )
         for line in content.split('\n'):
             if not line:
                 continue
@@ -1077,7 +1330,9 @@ class UpdateTest(unittest.TestCase):
                     self.assertEqual(app.get('Donate', '').split('/')[-1], v)
 
     def test_insert_funding_yml_donation_links_with_corrupt_file(self):
-        testdir = tempfile.mkdtemp(prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir)
+        testdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
         os.chdir(testdir)
         os.mkdir('build')
         app = fdroidserver.metadata.App()
@@ -1085,11 +1340,15 @@ class UpdateTest(unittest.TestCase):
         apps = {app.id: app}
         os.mkdir(os.path.join('build', app.id))
         with open(os.path.join('build', app.id, 'FUNDING.yml'), 'w') as fp:
-            fp.write(textwrap.dedent("""
+            fp.write(
+                textwrap.dedent(
+                    """
                 opencollective: foo
                 custom: []
                 liberapay: :
-            """))
+            """
+                )
+            )
         fdroidserver.update.insert_funding_yml_donation_links(apps)
         for field in DONATION_FIELDS:
             self.assertIsNone(app.get(field))
@@ -1117,13 +1376,116 @@ class UpdateTest(unittest.TestCase):
         self.assertIsNotNone(fdroidserver.update.sanitize_funding_yml_entry(' WhyIncludeWhitespace '))
         self.assertIsNotNone(fdroidserver.update.sanitize_funding_yml_entry(['first', 'second']))
 
+    def test_set_localized_text_entry(self):
+        tmptestsdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
+        os.chdir(tmptestsdir)
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.update.config = config
+        fdroidserver.update.options = fdroidserver.common.options
+
+        files = {
+            'full-description.txt': 'description',
+            'short-description.txt': 'summary',
+            'title.txt': 'name',
+            'video-url.txt': 'video',
+        }
+
+        for f, key in files.items():
+            limit = config['char_limits'][key]
+            with open(f, 'w') as fp:
+                fp.write(''.join(random.choice(string.ascii_letters) for i in range(limit + 100)))
+            locale = 'ru_US'
+            app = dict()
+            fdroidserver.update._set_localized_text_entry(app, locale, key, f)
+            self.assertEqual(limit, len(app['localized'][locale][key]))
+
+            f = 'badlink-' + f
+            os.symlink('/path/to/nowhere', f)
+            app = dict()
+            fdroidserver.update._set_localized_text_entry(app, locale, key, f)
+            self.assertIsNone(app['localized'].get(locale, {}).get(key))
+
+    def test_set_author_entry(self):
+        tmptestsdir = tempfile.mkdtemp(
+            prefix=inspect.currentframe().f_code.co_name, dir=self.tmpdir
+        )
+        os.chdir(tmptestsdir)
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.update.config = config
+        fdroidserver.update.options = fdroidserver.common.options
+
+        f = 'contact-website.txt'
+        key = 'author'
+        url = 'https://f-droid.org/'
+        limit = config['char_limits']['author']
+        with open(f, 'w') as fp:
+            fp.write(url)
+            fp.write('\n')
+        app = dict()
+        fdroidserver.update._set_author_entry(app, key, f)
+        self.assertEqual(url, app[key])
+
+        f = 'limits.txt'
+        key = 'author'
+        limit = config['char_limits']['author']
+        for key in ('authorEmail', 'authorPhone', 'authorWebSite'):
+            with open(f, 'w') as fp:
+                fp.write(''.join(random.choice(string.ascii_letters) for i in range(limit + 100)))
+            app = dict()
+            fdroidserver.update._set_author_entry(app, key, f)
+            self.assertEqual(limit, len(app[key]))
+
+        f = 'badlink.txt'
+        os.symlink('/path/to/nowhere', f)
+        app = dict()
+        fdroidserver.update._set_author_entry(app, key, f)
+        self.assertIsNone(app.get(key))
+
+    def test_status_update_json(self):
+        fdroidserver.common.config = {}
+        fdroidserver.update.config = {}
+        fdroidserver.update.options = Options
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            with mock.patch('sys.argv', ['fdroid update', '']):
+                fdroidserver.update.status_update_json([], [])
+                with open('repo/status/update.json') as fp:
+                    data = json.load(fp)
+                self.assertTrue('apksigner' in data)
+
+                fdroidserver.update.config = {
+                    'apksigner': 'apksigner',
+                }
+                fdroidserver.update.status_update_json([], [])
+                with open('repo/status/update.json') as fp:
+                    data = json.load(fp)
+                self.assertEqual(shutil.which(fdroidserver.update.config['apksigner']), data['apksigner'])
+
+                fdroidserver.update.config = {}
+                fdroidserver.common.fill_config_defaults(fdroidserver.update.config)
+                fdroidserver.update.status_update_json([], [])
+                with open('repo/status/update.json') as fp:
+                    data = json.load(fp)
+                self.assertEqual(fdroidserver.update.config.get('apksigner'), data['apksigner'])
+                self.assertEqual(fdroidserver.update.config['jarsigner'], data['jarsigner'])
+                self.assertEqual(fdroidserver.update.config['keytool'], data['keytool'])
+
 
 if __name__ == "__main__":
     os.chdir(os.path.dirname(__file__))
 
     parser = optparse.OptionParser()
-    parser.add_option("-v", "--verbose", action="store_true", default=False,
-                      help="Spew out even more information than normal")
+    parser.add_option(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Spew out even more information than normal",
+    )
     (fdroidserver.common.options, args) = parser.parse_args(['--verbose'])
 
     newSuite = unittest.TestSuite()

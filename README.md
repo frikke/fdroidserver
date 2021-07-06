@@ -2,7 +2,7 @@
 
 | CI Builds                |  fdroidserver | buildserver | fdroid build --all | publishing tools |
 |--------------------------|:-------------:|:-----------:|:------------------:|:----------------:|
-| GNU/Linux                | [![fdroidserver status on GNU/Linux](https://gitlab.com/fdroid/fdroidserver/badges/master/build.svg)](https://gitlab.com/fdroid/fdroidserver/builds) | [![buildserver status](https://jenkins.debian.net/job/reproducible_setup_fdroid_build_environment/badge/icon)](https://jenkins.debian.net/job/reproducible_setup_fdroid_build_environment) | [![fdroid build all status](https://jenkins.debian.net/job/reproducible_fdroid_build_apps/badge/icon)](https://jenkins.debian.net/job/reproducible_fdroid_build_apps/) | [![fdroid test status](https://jenkins.debian.net/job/reproducible_fdroid_test/badge/icon)](https://jenkins.debian.net/job/reproducible_fdroid_test/) |
+| GNU/Linux                | [![fdroidserver status on GNU/Linux](https://gitlab.com/fdroid/fdroidserver/badges/master/pipeline.svg)](https://gitlab.com/fdroid/fdroidserver/-/jobs) | [![buildserver status](https://jenkins.debian.net/job/reproducible_setup_fdroid_build_environment/badge/icon)](https://jenkins.debian.net/job/reproducible_setup_fdroid_build_environment) | [![fdroid build all status](https://jenkins.debian.net/job/reproducible_fdroid_build_apps/badge/icon)](https://jenkins.debian.net/job/reproducible_fdroid_build_apps/) | [![fdroid test status](https://jenkins.debian.net/job/reproducible_fdroid_test/badge/icon)](https://jenkins.debian.net/job/reproducible_fdroid_test/) |
 | macOS                    | [![fdroidserver status on macOS](https://travis-ci.org/f-droid/fdroidserver.svg?branch=master)](https://travis-ci.org/f-droid/fdroidserver) | | | |
 
 
@@ -56,11 +56,10 @@ The test suite for all of the `fdroid` commands is in the _tests/_
 subdir.  _.gitlab-ci.yml_ and _.travis.yml_ run this test suite on
 various configurations.
 
-* _tests/complete-ci-tests_ runs _pylint_ and all tests on two
-  different pyvenvs
 * _tests/run-tests_ runs the whole test suite
 * _tests/*.TestCase_ are individual unit tests for all of the `fdroid`
   commands, which can be run separately, e.g. `./update.TestCase`.
+* run one test: `tests/common.TestCase CommonTest.test_get_apk_id`
 
 
 #### Additional tests for different linux distributions
@@ -85,9 +84,32 @@ RAM. These test scripts are in the root of the project, all starting
 with _jenkins-_ since they are run on https://jenkins.debian.net.
 
 
-## Translation
+### Translation
 
 Everything can be translated.  See
 [Translation and Localization](https://f-droid.org/docs/Translation_and_Localization)
-for more info.
+for more info.  
+
 [![translation status](https://hosted.weblate.org/widgets/f-droid/-/fdroidserver/multi-auto.svg)](https://hosted.weblate.org/engage/f-droid/?utm_source=widget)
+
+
+### Documentation
+
+The API documentation based on the docstrings gets automatically published [here](http://fdroid.gitlab.io/fdroidserver/) on every commit on the `master` branch.
+
+It can be built locally via
+
+```bash
+pip install -e .[docs]
+cd docs
+sphinx-apidoc -o ./source ../fdroidserver -M -e
+sphinx-autogen -o generated source/*.rst   
+make html
+```
+
+To additionally lint the code call
+```bash
+pydocstyle fdroidserver --count
+```
+
+When writing docstrings you should follow the [numpy style guide](https://numpydoc.readthedocs.io/en/latest/format.html).

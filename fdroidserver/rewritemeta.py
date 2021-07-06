@@ -18,11 +18,11 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from argparse import ArgumentParser
-import os
 import logging
 import io
 import tempfile
 import shutil
+from pathlib import Path
 
 from . import _
 from . import common
@@ -36,9 +36,8 @@ def proper_format(app):
     s = io.StringIO()
     # TODO: currently reading entire file again, should reuse first
     # read in metadata.py
-    with open(app.metadatapath, 'r') as f:
-        cur_content = f.read()
-    if app.metadatapath.endswith('.yml'):
+    cur_content = Path(app.metadatapath).read_text(encoding='utf-8')
+    if Path(app.metadatapath).suffix == '.yml':
         metadata.write_yaml(s, app)
     content = s.getvalue()
     s.close()
@@ -61,12 +60,12 @@ def main():
     config = common.read_config(options)
 
     # Get all apps...
-    allapps = metadata.read_metadata(xref=True)
+    allapps = metadata.read_metadata(options.appid)
     apps = common.read_app_args(options.appid, allapps, False)
 
     for appid, app in apps.items():
-        path = app.metadatapath
-        if path.endswith('.yml'):
+        path = Path(app.metadatapath)
+        if path.suffix == '.yml':
             logging.info(_("Rewriting '{appid}'").format(appid=appid))
         else:
             logging.warning(_('Cannot rewrite "{path}"').format(path=path))
@@ -78,7 +77,7 @@ def main():
             continue
 
         newbuilds = []
-        for build in app.builds:
+        for build in app.get('Builds', []):
             new = metadata.Build()
             for k in metadata.build_flags:
                 v = build[k]
@@ -86,14 +85,15 @@ def main():
                     continue
                 new[k] = v
             newbuilds.append(new)
-        app.builds = newbuilds
+        app['Builds'] = newbuilds
 
         # rewrite to temporary file before overwriting existsing
         # file in case there's a bug in write_metadata
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = os.path.join(tmpdir, os.path.basename(path))
+            tmp_path = Path(tmpdir) / path.name
             metadata.write_metadata(tmp_path, app)
-            shutil.move(tmp_path, path)
+            # TODO: Python3.6: Accept path-lik
+            shutil.move(str(tmp_path), str(path))
 
     logging.debug(_("Finished"))
 

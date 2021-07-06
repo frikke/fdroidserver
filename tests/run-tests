@@ -24,8 +24,13 @@ copy_apks_into_repo() {
             echo "$f --> repo/$apk"
             ln "$f" $1/repo/$apk || \
                 rsync -axv "$f" $1/repo/$apk # rsync if hard link is not possible
+	    touch $1/.found-apks
         fi
     done
+    if [ ! -e $1/.found-apks ]; then
+	echo "ERROR: The dir APKDIR must have APKs in it! $APKDIR does not."
+	exit 1
+    fi
     set -x
 }
 
@@ -56,18 +61,23 @@ fdroid_init_with_prebuilt_keystore() {
         keystore="$1"
     fi
     $fdroid init --keystore $keystore --repo-keyalias=sova
-    echo 'keystorepass = "r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI="' >> config.py
-    echo 'keypass = "r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI="' >> config.py
-}
-
-# the < is reverse since 0 means success in exit codes
-have_git_2_3() {
-    python3 -c "import sys; from distutils.version import LooseVersion as V; sys.exit(V(sys.argv[3]) < V('2.3'))" `git --version`
+    echo 'keystorepass: r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI=' >> config.yml
+    echo 'keypass: r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI=' >> config.yml
 }
 
 is_MD5_disabled() {
     javac $WORKSPACE/tests/IsMD5Disabled.java && java -cp $WORKSPACE/tests IsMD5Disabled
-    return $?
+}
+
+use_apksigner() {
+    python3 -c "
+import sys
+sys.path.insert(0, '$WORKSPACE')
+from fdroidserver import common
+c = {'sdk_path': '$ANDROID_HOME'}
+common.find_apksigner(c)
+exit(c.get('apksigner') is None)
+"
 }
 
 #------------------------------------------------------------------------------#
@@ -126,6 +136,11 @@ else
     sed=sed
 fi
 
+# allow the location of git to be overridden
+if [ -z "$git" ]; then
+    git="env HOME= GIT_AUTHOR_NAME='Test' GIT_AUTHOR_EMAIL='no@mail' GIT_COMMITTER_NAME='Test' GIT_COMMITTER_EMAIL='no@mail' git"
+fi
+
 set -x # show each command as it is executed
 
 #------------------------------------------------------------------------------#
@@ -160,15 +175,15 @@ $fdroid --version
 #------------------------------------------------------------------------------#
 echo_header 'run process when building and signing are on separate machines'
 
-if which zipalign || ls -1 $ANDROID_HOME/build-tools/*/zipalign; then
+if use_apksigner; then
     REPOROOT=`create_test_dir`
     cd $REPOROOT
     cp $WORKSPACE/tests/keystore.jks $REPOROOT/
     $fdroid init --keystore keystore.jks --repo-keyalias=sova
-    echo 'make_current_version_link = True' >> config.py
-    echo 'keystorepass = "r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI="' >> config.py
-    echo 'keypass = "r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI="' >> config.py
-    echo 'keydname = "CN=Birdman, OU=Cell, O=Alcatraz, L=Alcatraz, S=California, C=US"' >> config.py
+    echo 'make_current_version_link: true' >> config.yml
+    echo 'keystorepass: r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI=' >> config.yml
+    echo 'keypass: r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI=' >> config.yml
+    echo 'keydname: "CN=Birdman, OU=Cell, O=Alcatraz, L=Alcatraz, S=California, C=US"' >> config.yml
     test -d archive || mkdir archive
     test -d metadata || mkdir metadata
     cp $WORKSPACE/tests/metadata/info.guardianproject.urzip.yml metadata/
@@ -194,8 +209,8 @@ REPOROOT=`create_test_dir`
 cd $REPOROOT
 
 fdroid_init_with_prebuilt_keystore
-$sed -i.tmp 's,^ *repo_description.*,repo_description = """获取已安装在您的设备上的应用的,' config.py
-echo "mirrors = ('https://foo.bar/fdroid', 'http://secret.onion/fdroid')" >> config.py
+$sed -i.tmp 's,^ *repo_description.*,repo_description: |\n  获取已安装在您的设备上的应用的,' config.yml
+echo "mirrors: ['https://foo.bar/fdroid', 'http://secret.onion/fdroid']" >> config.yml
 mkdir metadata
 cp $WORKSPACE/tests/urzip.apk $WORKSPACE/tests/bad-unicode*.apk repo/
 cp $WORKSPACE/tests/metadata/info.guardianproject.urzip.yml metadata/
@@ -205,25 +220,10 @@ $fdroid update
 
 
 #------------------------------------------------------------------------------#
-echo_header 'run "fdroid build" in fresh git checkout from import.TestCase'
-
-cd $WORKSPACE/tests/tmp/importer
-git remote update -p
-git clean -fdx
-# stick with known working commit, in case future commits break things for this code
-git reset --hard fea54e1161d5eb9eb1a54e26253ef84d3ab63705
-if [ -d $ANDROID_HOME/platforms/android-23 && -d $ANDROID_HOME/build-tools/23.0.3 ]; then
-    $fdroid build --verbose org.fdroid.ci.test.app:300
-else
-    echo 'WARNING: Skipping "fdroid build" test since android-23 is missing!'
-fi
-
-#------------------------------------------------------------------------------#
 echo_header 'copy git import and run "fdroid scanner" on it'
 
 REPOROOT=`create_test_dir`
 cd $REPOROOT
-cp $WORKSPACE/examples/fdroid-icon.png $REPOROOT/
 mkdir metadata
 echo "AutoName: Just A Test" > metadata/org.fdroid.ci.test.app.yml
 echo "WebSite: " >> metadata/org.fdroid.ci.test.app.yml
@@ -253,11 +253,11 @@ fdroid_init_with_prebuilt_keystore
 cp -a $WORKSPACE/tests/metadata $WORKSPACE/tests/repo $WORKSPACE/tests/stats $REPOROOT/
 cp -a $WORKSPACE/tests/gnupghome $GNUPGHOME
 chmod 0700 $GNUPGHOME
-echo "install_list = 'org.adaway'" >> config.py
-echo "uninstall_list = ('com.android.vending', 'com.facebook.orca',)" >> config.py
-echo "gpghome = '$GNUPGHOME'" >> config.py
-echo "gpgkey = 'CE71F7FB'" >> config.py
-echo "mirrors = ('http://foobarfoobarfoobar.onion/fdroid','https://foo.bar/fdroid',)" >> config.py
+echo "install_list: org.adaway" >> config.yml
+echo "uninstall_list: [com.android.vending, com.facebook.orca]" >> config.yml
+echo "gpghome: $GNUPGHOME" >> config.yml
+echo "gpgkey: CE71F7FB" >> config.yml
+echo "mirrors: ['http://foobarfoobarfoobar.onion/fdroid', 'https://foo.bar/fdroid']" >> config.yml
 $fdroid update --verbose --pretty
 test -e repo/index.xml
 test -e repo/index.jar
@@ -293,7 +293,7 @@ echo_header 'test moving lots of APKs to the archive'
 REPOROOT=`create_test_dir`
 cd $REPOROOT
 fdroid_init_with_prebuilt_keystore
-$sed -i.tmp '/allow_disabled_algorithms/d' config.py
+$sed -i.tmp '/allow_disabled_algorithms/d' config.yml
 test -d metadata || mkdir metadata
 cp $WORKSPACE/tests/metadata/*.yml metadata/
 echo 'Summary: good test version of urzip' > metadata/info.guardianproject.urzip.yml
@@ -305,10 +305,10 @@ cp $WORKSPACE/tests/urzip.apk \
    $WORKSPACE/tests/repo/com.politedroid_[0-9].apk \
    $WORKSPACE/tests/repo/obb.main.twoversions_110161[357].apk \
    repo/
-$sed -i.tmp 's,archive_older = [0-9],archive_older = 3,' config.py
+printf '\narchive_older: 3\n' >> config.yml
 
 $fdroid update --pretty --nosign
-if which apksigner; then
+if use_apksigner; then
     test `grep '<package>' archive/index.xml | wc -l` -eq 2
     test `grep '<package>' repo/index.xml | wc -l` -eq 10
 else
@@ -317,8 +317,9 @@ else
     test `grep '<package>' repo/index.xml | wc -l` -eq 7
 fi
 
+
 #------------------------------------------------------------------------------#
-if ! which apksigner; then
+if ! use_apksigner; then
     echo_header 'test per-app "Archive Policy"'
 
     REPOROOT=`create_test_dir`
@@ -328,7 +329,7 @@ if ! which apksigner; then
     cp $WORKSPACE/tests/metadata/com.politedroid.yml metadata/
     test -d repo || mkdir repo
     cp $WORKSPACE/tests/repo/com.politedroid_[0-9].apk repo/
-    $sed -i.tmp 's,archive_older = [0-9],archive_older = 3,' config.py
+    printf '\narchive_older: 3\n' >> config.yml
 
     $fdroid update --pretty --nosign
     test `grep '<package>' archive/index.xml | wc -l` -eq 0
@@ -414,7 +415,7 @@ cp $WORKSPACE/tests/metadata/com.politedroid.yml metadata/
 $sed -i.tmp '/ArchivePolicy:/d' metadata/com.politedroid.yml
 test -d repo || mkdir repo
 cp $WORKSPACE/tests/repo/com.politedroid_[0-9].apk repo/
-$sed -i.tmp 's,archive_older = [0-9],archive_older = 3,' config.py
+printf '\narchive_older: 3\n' >> config.yml
 
 $fdroid update --pretty --nosign
 test `grep '<package>' archive/index.xml | wc -l` -eq 1
@@ -428,7 +429,7 @@ test -e repo/com.politedroid_4.apk
 test -e repo/com.politedroid_5.apk
 test -e repo/com.politedroid_6.apk
 
-$sed -i.tmp 's,archive_older = 3,archive_older = 1,' config.py
+$sed -i.tmp 's,archive_older: 3,archive_older: 1,' config.yml
 $fdroid update --pretty --nosign
 test `grep '<package>' archive/index.xml | wc -l` -eq 3
 test `grep '<package>' repo/index.xml | wc -l` -eq 1
@@ -489,8 +490,8 @@ echo_header 'test allowing disabled signatures in repo and archive'
 REPOROOT=`create_test_dir`
 cd $REPOROOT
 fdroid_init_with_prebuilt_keystore
-echo 'allow_disabled_algorithms = True' >> config.py
-$sed -i.tmp 's,archive_older = [0-9],archive_older = 3,' config.py
+echo 'allow_disabled_algorithms: true' >> config.yml
+printf '\narchive_older: 3\n' >> config.yml
 test -d metadata || mkdir metadata
 cp $WORKSPACE/tests/metadata/com.politedroid.yml metadata/
 echo 'Summary: good test version of urzip' > metadata/info.guardianproject.urzip.yml
@@ -525,8 +526,9 @@ test -e repo/org.bitbucket.tickytacky.mirrormirror_3.apk
 test -e repo/org.bitbucket.tickytacky.mirrormirror_4.apk
 test -e archive/urzip-badsig.apk
 
-if ! which apksigner; then
-    $sed -i.tmp '/allow_disabled_algorithms/d' config.py
+sed -i.tmp '/apksigner:/d' config.yml
+if ! use_apksigner; then
+    $sed -i.tmp '/allow_disabled_algorithms/d' config.yml
     $fdroid update --pretty --nosign
     test `grep '<package>' archive/index.xml | wc -l` -eq 5
     test `grep '<package>' repo/index.xml | wc -l` -eq 3
@@ -552,7 +554,7 @@ if ! which apksigner; then
 fi
 
 # test unarchiving when disabled_algorithms are allowed again
-echo 'allow_disabled_algorithms = True' >> config.py
+echo 'allow_disabled_algorithms: true' >> config.yml
 $fdroid update --pretty --nosign
 test `grep '<package>' archive/index.xml | wc -l` -eq 2
 test `grep '<package>' repo/index.xml | wc -l` -eq 6
@@ -582,7 +584,7 @@ echo_header 'rename apks with `fdroid update --rename-apks`, --nosign for speed'
 REPOROOT=`create_test_dir`
 cd $REPOROOT
 fdroid_init_with_prebuilt_keystore
-echo 'keydname = "CN=Birdman, OU=Cell, O=Alcatraz, L=Alcatraz, S=California, C=US"' >> config.py
+echo 'keydname: "CN=Birdman, OU=Cell, O=Alcatraz, L=Alcatraz, S=California, C=US"' >> config.yml
 test -d metadata || mkdir metadata
 cp $WORKSPACE/tests/metadata/info.guardianproject.urzip.yml metadata/
 test -d repo || mkdir repo
@@ -611,6 +613,7 @@ echo_header "test for added date being set correctly for repo and archive"
 REPOROOT=`create_test_dir`
 cd $REPOROOT
 fdroid_init_with_prebuilt_keystore
+printf '\narchive_older: 3\n' >> config.yml
 mkdir -p {repo,archive,metadata,stats}
 cp $WORKSPACE/tests/repo/com.politedroid_5.apk archive
 cp $WORKSPACE/tests/repo/com.politedroid_6.apk repo
@@ -679,11 +682,11 @@ echo "Description: |" >> metadata/fake.yml
 echo " this is fake" >> metadata/fake.yml
 
 # fake that no JDKs are available
-echo 'java_paths = {}' > config.py
+echo 'java_paths: {}' > config.yml
 
 LOCAL_COPY_DIR=`create_test_dir`/fdroid
 mkdir -p $LOCAL_COPY_DIR/repo
-echo "local_copy_dir = '$LOCAL_COPY_DIR'" >> config.py
+echo "local_copy_dir: $LOCAL_COPY_DIR" >> config.yml
 
 $fdroid checkupdates --allow-dirty
 which gpg && $fdroid gpgsign
@@ -691,7 +694,7 @@ $fdroid lint
 $fdroid readmeta
 $fdroid rewritemeta fake
 $fdroid deploy
-$fdroid server update
+$fdroid deploy
 $fdroid scanner
 
 # run these to get their output, but the are not setup, so don't fail
@@ -725,26 +728,27 @@ cd $REPOROOT
 $fdroid init
 $fdroid update --create-metadata --verbose
 $fdroid readmeta
-$fdroid server update --local-copy-dir=/tmp/fdroid
-$fdroid deploy --local-copy-dir=/tmp/fdroid --verbose
+LOCAL_COPY_DIR=`create_test_dir`/fdroid
+$fdroid deploy --local-copy-dir=$LOCAL_COPY_DIR
+$fdroid deploy --local-copy-dir=$LOCAL_COPY_DIR --verbose
 
 # now test the errors work
 set +e
-$fdroid server update --local-copy-dir=thisisnotanabsolutepath
+$fdroid deploy --local-copy-dir=thisisnotanabsolutepath
 if [ $? -eq 0 ]; then
     echo "This should have failed because thisisnotanabsolutepath is not an absolute path!"
     exit 1
 else
     echo "testing absolute path checker passed"
 fi
-$fdroid server update --local-copy-dir=/tmp/IReallyDoubtThisPathExistsasdfasdf
+$fdroid deploy --local-copy-dir=/tmp/IReallyDoubtThisPathExistsasdfasdf
 if [ $? -eq 0 ]; then
     echo "This should have failed because the path does not end with 'fdroid'!"
     exit 1
 else
     echo "testing dirname exists checker passed"
 fi
-$fdroid server update --local-copy-dir=/tmp/IReallyDoubtThisPathExistsasdfasdf/fdroid
+$fdroid deploy --local-copy-dir=/tmp/IReallyDoubtThisPathExistsasdfasdf/fdroid
 if [ $? -eq 0 ]; then
     echo "This should have failed because the dirname path does not exist!"
     exit 1
@@ -766,12 +770,12 @@ $fdroid readmeta
 grep -F '<application id=' repo/index.xml > /dev/null
 
 LOCALCOPYDIR=`create_test_dir`/fdroid
-$fdroid server update --local-copy-dir=$LOCALCOPYDIR
+$fdroid deploy --local-copy-dir=$LOCALCOPYDIR
 NEWREPOROOT=`create_test_dir`
 cd $NEWREPOROOT
 fdroid_init_with_prebuilt_keystore
-echo "sync_from_local_copy_dir = True" >> config.py
-$fdroid server update --local-copy-dir=$LOCALCOPYDIR
+echo "sync_from_local_copy_dir: true" >> config.yml
+$fdroid deploy --local-copy-dir=$LOCALCOPYDIR
 
 
 #------------------------------------------------------------------------------#
@@ -839,7 +843,7 @@ KEYSTORE=$REPOROOT/keystore.p12
 cd $REPOROOT
 $fdroid init --keystore $KEYSTORE --android-home $FAKE_ANDROID_HOME
 set +e
-grep $FAKE_ANDROID_HOME $REPOROOT/config.py
+grep $FAKE_ANDROID_HOME $REPOROOT/config.yml
 if [ $? -ne 0 ]; then
     echo "the value set in --android-home '$FAKE_ANDROID_HOME' should override ANDROID_HOME '$ANDROID_HOME'"
     exit 1
@@ -937,7 +941,6 @@ echo_header "setup a new repo manually and generate a keystore"
 REPOROOT=`create_test_dir`
 KEYSTORE=$REPOROOT/keystore.p12
 cd $REPOROOT
-cp $WORKSPACE/examples/fdroid-icon.png $REPOROOT/
 ! test -e $KEYSTORE
 set +e
 $fdroid update
@@ -1018,10 +1021,10 @@ set -e
 
 # now set up fake, non-working keystore setup
 touch $KEYSTORE
-echo "keystore = \"$KEYSTORE\"" >> config.py
-echo 'repo_keyalias = "foo"' >> config.py
-echo 'keystorepass = "foo"' >> config.py
-echo 'keypass = "foo"' >> config.py
+echo "keystore: $KEYSTORE" >> config.yml
+echo 'repo_keyalias: foo' >> config.yml
+echo 'keystorepass: foo' >> config.yml
+echo 'keypass: foo' >> config.yml
 set +e
 $fdroid update --create-metadata --verbose
 if [ $? -eq 0 ]; then
@@ -1042,21 +1045,17 @@ GNUPGHOME=$REPOROOT/gnupghome
 cd $REPOROOT
 fdroid_init_with_prebuilt_keystore
 cp -a $WORKSPACE/tests/metadata $WORKSPACE/tests/repo $WORKSPACE/tests/stats $REPOROOT/
-echo "binary_transparency_remote = '$GIT_REMOTE'" >> config.py
+echo "binary_transparency_remote: $GIT_REMOTE" >> config.yml
 $fdroid update --verbose
-if have_git_2_3; then
-    $fdroid server update --verbose
-    test -e repo/index.xml
-    test -e repo/index.jar
-    test -e repo/index-v1.jar
-    grep -F '<application id=' repo/index.xml > /dev/null
-    cd binary_transparency
-    [ `git rev-list --count HEAD` == "2" ]
-    cd $GIT_REMOTE
-    [ `git rev-list --count HEAD` == "2" ]
-else
-    echo "Skipping test, `git --version` older than 2.3"
-fi
+$fdroid deploy --verbose
+test -e repo/index.xml
+test -e repo/index.jar
+test -e repo/index-v1.jar
+grep -F '<application id=' repo/index.xml > /dev/null
+cd binary_transparency
+[ "$($git rev-list --count HEAD)" == "2" ]
+cd $GIT_REMOTE
+[ "$($git rev-list --count HEAD)" == "2" ]
 
 
 #------------------------------------------------------------------------------#
@@ -1079,7 +1078,7 @@ test -e tmp/apkcache.json
 grep -F '<application id=' repo/index.xml > /dev/null
 
 # now set fake repo_keyalias
-$sed -i.tmp 's,^ *repo_keyalias.*,repo_keyalias = "fake",' $REPOROOT/config.py
+$sed -i.tmp 's,^ *repo_keyalias.*,repo_keyalias: fake,' $REPOROOT/config.yml
 set +e
 $fdroid update
 if [ $? -eq 0 ]; then
@@ -1115,14 +1114,15 @@ echo_header "setup a new repo from scratch using ANDROID_HOME with git mirror"
 # fake git remote server for repo mirror
 SERVER_GIT_MIRROR=`create_test_dir`
 cd $SERVER_GIT_MIRROR
-git init
-git config receive.denyCurrentBranch updateInstead
+$git init
+$git config receive.denyCurrentBranch updateInstead
 
 REPOROOT=`create_test_dir`
 GIT_MIRROR=$REPOROOT/git-mirror
 cd $REPOROOT
 fdroid_init_with_prebuilt_keystore
-echo "servergitmirrors = '$SERVER_GIT_MIRROR'" >> config.py
+printf '\narchive_older: 3\n' >> config.yml
+echo "servergitmirrors: $SERVER_GIT_MIRROR" >> config.yml
 
 cp $WORKSPACE/tests/repo/com.politedroid_[345].apk repo/
 $fdroid update --create-metadata
@@ -1150,103 +1150,221 @@ test -e $SERVER_GIT_MIRROR/fdroid/repo/com.politedroid_5.apk
 test -e $SERVER_GIT_MIRROR/fdroid/repo/com.politedroid_6.apk
 before=`du -s --bytes $GIT_MIRROR/.git/ | awk '{print $1}'`
 
-echo "git_mirror_size_limit = '60kb'" >> config.py
+echo "git_mirror_size_limit: 60kb" >> config.yml
 $fdroid update
 $fdroid deploy
 test -e $REPOROOT/archive/com.politedroid_3.apk
 ! test -e $SERVER_GIT_MIRROR/fdroid/archive/com.politedroid_3.apk
 after=`du -s --bytes $GIT_MIRROR/.git/ | awk '{print $1}'`
 ! test -e $GIT_MIRROR/.git/test-stamp
-git -C $GIT_MIRROR gc
-git -C $SERVER_GIT_MIRROR gc
+$git -C "$GIT_MIRROR" gc
+$git -C "$SERVER_GIT_MIRROR" gc
 test $before -gt $after
 
 
 #------------------------------------------------------------------------------#
 echo_header "sign binary repo in offline box, then publishing from online box"
 
-if have_git_2_3; then
-    OFFLINE_ROOT=`create_test_dir`
-    KEYSTORE=$WORKSPACE/tests/keystore.p12
-    LOCAL_COPY_DIR=`create_test_dir`/fdroid
-    mkdir $LOCAL_COPY_DIR
-    ONLINE_ROOT=`create_test_dir`
-    SERVERWEBROOT=`create_test_dir`
+OFFLINE_ROOT=`create_test_dir`
+KEYSTORE=$WORKSPACE/tests/keystore.p12
+LOCAL_COPY_DIR=`create_test_dir`/fdroid
+mkdir $LOCAL_COPY_DIR
+ONLINE_ROOT=`create_test_dir`
+SERVERWEBROOT=`create_test_dir`/fdroid
 
-    # create offline binary transparency log
-    cd $OFFLINE_ROOT
-    mkdir binary_transparency
-    cd binary_transparency
-    git init
+# create offline binary transparency log
+cd $OFFLINE_ROOT
+mkdir binary_transparency
+cd binary_transparency
+$git init
 
-    # fake git remote server for binary transparency log
-    BINARY_TRANSPARENCY_REMOTE=`create_test_dir`
+# fake git remote server for binary transparency log
+BINARY_TRANSPARENCY_REMOTE=`create_test_dir`
 
-    # fake git remote server for repo mirror
-    SERVER_GIT_MIRROR=`create_test_dir`
-    cd $SERVER_GIT_MIRROR
-    git init
-    git config receive.denyCurrentBranch updateInstead
+# fake git remote server for repo mirror
+SERVER_GIT_MIRROR=`create_test_dir`
+cd $SERVER_GIT_MIRROR
+$git init
+$git config receive.denyCurrentBranch updateInstead
 
-    cd $OFFLINE_ROOT
-    fdroid_init_with_prebuilt_keystore
-    cp -a $WORKSPACE/tests/metadata $WORKSPACE/tests/repo $WORKSPACE/tests/stats $OFFLINE_ROOT/
+cd $OFFLINE_ROOT
+fdroid_init_with_prebuilt_keystore
+printf '\narchive_older: 3\n' >> config.yml
+cp -a $WORKSPACE/tests/metadata $WORKSPACE/tests/repo $WORKSPACE/tests/stats $OFFLINE_ROOT/
+mkdir $OFFLINE_ROOT/unsigned
+cp $WORKSPACE/tests/urzip-release-unsigned.apk $OFFLINE_ROOT/unsigned
 
-    echo "mirrors = ['http://foo.bar/fdroid', 'http://asdflkdsfjafdsdfhkjh.onion/fdroid']" >> config.py
-    echo "servergitmirrors = '$SERVER_GIT_MIRROR'" >> config.py
-    echo "local_copy_dir = '$LOCAL_COPY_DIR'" >> config.py
-    $fdroid update --pretty
-    grep -F '<application id=' repo/index.xml > /dev/null
-    grep -F '/fdroid/repo</mirror>' repo/index.xml
-    grep -F '/fdroid/archive</mirror>' archive/index.xml
-    test `grep '<mirror>' repo/index.xml | wc -l` -eq 2
-    test `grep '<mirror>' archive/index.xml | wc -l` -eq 2
-    cd binary_transparency
-    [ `git rev-list --count HEAD` == "1" ]
-    cd ..
-    $fdroid server update --verbose
-    grep -F '<application id=' $LOCAL_COPY_DIR/repo/index.xml > /dev/null
-    cd $ONLINE_ROOT
-    echo "local_copy_dir = '$LOCAL_COPY_DIR'" >> config.py
-    echo "sync_from_local_copy_dir = True" >> config.py
-    echo "serverwebroots = '$SERVERWEBROOT'" >> config.py
-    echo "servergitmirrors = '$SERVER_GIT_MIRROR'" >> config.py
-    echo "local_copy_dir = '$LOCAL_COPY_DIR'" >> config.py
-    echo "binary_transparency_remote = '$BINARY_TRANSPARENCY_REMOTE'" >> config.py
-    $fdroid server update --verbose
-    cd $BINARY_TRANSPARENCY_REMOTE
-    [ `git rev-list --count HEAD` == "1" ]
-    cd $SERVER_GIT_MIRROR
-    [ `git rev-list --count HEAD` == "1" ]
-fi
+echo "mirrors: ['http://foo.bar/fdroid', 'http://asdflkdsfjafdsdfhkjh.onion/fdroid']" >> config.yml
+echo "servergitmirrors: $SERVER_GIT_MIRROR" >> config.yml
+echo "local_copy_dir: $LOCAL_COPY_DIR" >> config.yml
+$fdroid update --pretty
+grep -F '<application id=' repo/index.xml > /dev/null
+grep -F '/fdroid/repo</mirror>' repo/index.xml
+grep -F '/fdroid/archive</mirror>' archive/index.xml
+test `grep '<mirror>' repo/index.xml | wc -l` -eq 2
+test `grep '<mirror>' archive/index.xml | wc -l` -eq 2
+cd binary_transparency
+[ "$($git rev-list --count HEAD)" == "1" ]
+cd ..
+$fdroid deploy --verbose
+test -e $LOCAL_COPY_DIR/unsigned/urzip-release-unsigned.apk
+grep -F '<application id=' $LOCAL_COPY_DIR/repo/index.xml > /dev/null
+cd $ONLINE_ROOT
+echo "local_copy_dir: $LOCAL_COPY_DIR" >> config.yml
+echo "sync_from_local_copy_dir: True" >> config.yml
+echo "serverwebroot: $SERVERWEBROOT" >> config.yml
+echo "servergitmirrors: $SERVER_GIT_MIRROR" >> config.yml
+echo "binary_transparency_remote: $BINARY_TRANSPARENCY_REMOTE" >> config.yml
+$fdroid deploy --verbose
+test -e $ONLINE_ROOT/unsigned/urzip-release-unsigned.apk
+test -e $SERVERWEBROOT/unsigned/urzip-release-unsigned.apk
+cd $BINARY_TRANSPARENCY_REMOTE
+[ "$($git rev-list --count HEAD)" == "1" ]
+cd $SERVER_GIT_MIRROR
+[ "$($git rev-list --count HEAD)" == "1" ]
 
 
 #------------------------------------------------------------------------------#
 echo_header 'test extracting and publishing with developer signature'
 
-REPOROOT=`create_test_dir`
-cd $REPOROOT
-fdroid_init_with_prebuilt_keystore
-echo 'keydname = "CN=Birdman, OU=Cell, O=Alcatraz, L=Alcatraz, S=California, C=US"' >> config.py
-test -d metadata || mkdir metadata
-cp $WORKSPACE/tests/metadata/com.politedroid.yml metadata/
-test -d repo || mkdir repo
-test -d unsigned || mkdir unsigned
-cp $WORKSPACE/tests/repo/com.politedroid_6.apk unsigned/
-$fdroid signatures unsigned/com.politedroid_6.apk
-test -d metadata/com.politedroid/signatures/6
-test -f metadata/com.politedroid/signatures/6/MANIFEST.MF
-test -f metadata/com.politedroid/signatures/6/RELEASE.RSA
-test -f metadata/com.politedroid/signatures/6/RELEASE.SF
-! test -f repo/com.politedroid_6.apk
-$fdroid publish
-test -f repo/com.politedroid_6.apk
-if which jarsigner; then
-    jarsigner -verify repo/com.politedroid_6.apk
+if use_apksigner; then
+    REPOROOT=`create_test_dir`
+    cd $REPOROOT
+    fdroid_init_with_prebuilt_keystore
+    echo 'keydname: "CN=Birdman, OU=Cell, O=Alcatraz, L=Alcatraz, S=California, C=US"' >> config.yml
+    test -d metadata || mkdir metadata
+    cp $WORKSPACE/tests/metadata/com.politedroid.yml metadata/
+    test -d repo || mkdir repo
+    test -d unsigned || mkdir unsigned
+    cp $WORKSPACE/tests/repo/com.politedroid_6.apk unsigned/
+    $fdroid signatures unsigned/com.politedroid_6.apk
+    test -d metadata/com.politedroid/signatures/6
+    test -f metadata/com.politedroid/signatures/6/MANIFEST.MF
+    test -f metadata/com.politedroid/signatures/6/RELEASE.RSA
+    test -f metadata/com.politedroid/signatures/6/RELEASE.SF
+    ! test -f repo/com.politedroid_6.apk
+    $fdroid publish
+    test -f repo/com.politedroid_6.apk
+    if which apksigner; then
+	apksigner verify repo/com.politedroid_6.apk
+    fi
+    if which jarsigner; then
+	jarsigner -verify repo/com.politedroid_6.apk
+    fi
 fi
-if which apksigner; then
-    apksigner verify repo/com.politedroid_6.apk
+
+
+#------------------------------------------------------------------------------#
+echo_header 'test mirroring a repo'
+
+if which wget; then
+    REPOROOT=`create_test_dir`
+    cd $WORKSPACE/tests
+    test -d archive || mkdir archive
+    cp repo/index-v1.json $REPOROOT/
+    $fdroid signindex
+    mv $REPOROOT/index-v1.json repo/index-v1.json
+
+    port=321${RANDOM:3}
+    test $(printf $port | wc -m) -le 3 && port=52734 # when $RANDOM doesn't work
+    timeout 5m python3 -m http.server $port --bind 127.0.0.1 > $REPOROOT/http.server.log 2>&1 &
+    http_server_pid=$!
+
+    cd $REPOROOT
+    http_proxy= HTTP_PROXY= $fdroid mirror http://127.0.0.1:${port}/
+    test -e 127.0.0.1\:${port}/repo/souch.smsbypass_9.apk
+    test -e 127.0.0.1\:${port}/repo/icons-640/souch.smsbypass.9.png
+    # the index shouldn't be saved unless it was verified
+    ! test -e 127.0.0.1\:${port}/repo/index-v1.jar
+    ! http_proxy= HTTP_PROXY= $fdroid mirror "http://127.0.0.1:${port}/?fingerprint=asdfasdf"
+    ! test -e 127.0.0.1\:${port}/repo/index-v1.jar
+    http_proxy= HTTP_PROXY= $fdroid mirror "http://127.0.0.1:${port}/?fingerprint=F49AF3F11EFDDF20DFFD70F5E3117B9976674167ADCA280E6B1932A0601B26F6"
+    test -e 127.0.0.1\:${port}/repo/index-v1.jar
+
+    # clean up
+    kill -9 $http_server_pid
+    rm -f 127.0.0.1\:${port}/repo/*.apk 127.0.0.1\:${port}/repo/*/*/*/*.png
+    sleep 1  # wait for webserver thread to quit
+else
+    echo "WARNING: wget not installed, skipping"
 fi
+
+#------------------------------------------------------------------------------#
+echo_header "Test recovering from from broken git submodules"
+
+ROOT=$(create_test_dir)
+cd "$ROOT"
+mkdir foo bar
+cd foo
+$git init
+echo a > a
+$git add a
+$git commit -m "a"
+
+cd ../bar
+$git init
+$git submodule add "file://$(pwd)/../foo" baz
+rm .gitmodules
+$git commit -am "a"
+rm -rf baz
+$git checkout baz
+$git tag 2
+
+cd ..
+mkdir repo
+mkdir metadata
+echo "RepoType: git" >> metadata/fake.yml
+echo "Repo: file://$(pwd)/bar" >> metadata/fake.yml
+echo "AutoUpdateMode: Version" >> metadata/fake.yml
+echo "UpdateCheckMode: Tags" >> metadata/fake.yml
+echo "UpdateCheckData: '|||'" >> metadata/fake.yml
+echo "CurrentVersion: 1" >> metadata/fake.yml
+echo "CurrentVersionCode: 1" >> metadata/fake.yml
+
+$fdroid checkupdates --allow-dirty
+grep "CurrentVersionCode: 2" metadata/fake.yml
+
+#------------------------------------------------------------------------------#
+echo_header "checkupdates ignore broken submodule"
+
+ROOT=$(create_test_dir)
+cd "$ROOT"
+mkdir foo bar
+cd foo
+$git init
+echo a > a
+$git add a
+$git commit -m a
+
+cd ../bar
+$git init
+$git submodule add "file://$(pwd)/../foo" baz
+$git commit -am a
+$git tag 2
+
+cd ../foo
+# delete the commit referenced in bar
+$git commit --amend -m aa
+$git reflog expire --expire=now --all
+$git gc --aggressive --prune=now
+
+cd ..
+mkdir repo
+mkdir metadata
+echo "RepoType: git" >> metadata/fake.yml
+echo "Repo: file://$(pwd)/bar" >> metadata/fake.yml
+echo "Builds:" >> metadata/fake.yml
+echo "   - versionName: 1" >> metadata/fake.yml
+echo "     versionCode: 1" >> metadata/fake.yml
+echo "     submodules: true" >> metadata/fake.yml
+echo "AutoUpdateMode: Version" >> metadata/fake.yml
+echo "UpdateCheckMode: Tags" >> metadata/fake.yml
+echo "UpdateCheckData: '|||'" >> metadata/fake.yml
+echo "CurrentVersion: 1" >> metadata/fake.yml
+echo "CurrentVersionCode: 1" >> metadata/fake.yml
+
+$fdroid checkupdates --allow-dirty
+grep "CurrentVersionCode: 2" metadata/fake.yml
 
 
 #------------------------------------------------------------------------------#

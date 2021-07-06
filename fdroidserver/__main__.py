@@ -21,7 +21,6 @@
 import re
 import sys
 import os
-import locale
 import pkgutil
 import logging
 
@@ -48,7 +47,6 @@ COMMANDS = OrderedDict([
     ("lint", _("Warn about possible metadata errors")),
     ("scanner", _("Scan the source code of a package")),
     ("stats", _("Update the stats of the repo")),
-    ("server", _("Old, deprecated name for fdroid deploy")),
     ("signindex", _("Sign indexes created using update --nosign")),
     ("btlog", _("Update the binary transparency log for a URL")),
     ("signatures", _("Extract signatures from APKs")),
@@ -71,9 +69,13 @@ def print_help(available_plugins=None):
 
 
 def preparse_plugin(module_name, module_dir):
-    """simple regex based parsing for plugin scripts,
-       so we don't have to import them when we just need the summary,
-       but not plan on executing this particular plugin."""
+    """No summary.
+
+    Simple regex based parsing for plugin scripts.
+
+    So we don't have to import them when we just need the summary,
+    but not plan on executing this particular plugin.
+    """
     if '.' in module_name:
         raise ValueError("No '.' allowed in fdroid plugin modules: '{}'"
                          .format(module_name))
@@ -137,6 +139,9 @@ def main():
         if command in ('-h', '--help'):
             print_help(available_plugins=available_plugins)
             sys.exit(0)
+        elif command == 'server':
+            print(_("""ERROR: The "server" subcommand has been removed, use "deploy"!"""))
+            sys.exit(1)
         elif command == '--version':
             output = _('no version info found!')
             cmddir = os.path.realpath(os.path.dirname(os.path.dirname(__file__)))
@@ -187,11 +192,6 @@ def main():
                            "can not be specified at the same time."))
         sys.exit(1)
 
-    # temporary workaround until server.py becomes deploy.py
-    if command == 'deploy':
-        command = 'server'
-        sys.argv.insert(2, 'update')
-
     # Trick optparse into displaying the right usage when --help is used.
     sys.argv[0] += ' ' + command
 
@@ -201,7 +201,7 @@ def main():
     else:
         mod = __import__(available_plugins[command]['name'], None, None, [command])
 
-    system_langcode, system_encoding = locale.getdefaultlocale()
+    system_encoding = sys.getdefaultencoding()
     if system_encoding is None or system_encoding.lower() not in ('utf-8', 'utf8'):
         logging.warning(_("Encoding is set to '{enc}' fdroid might run "
                           "into encoding issues. Please set it to 'UTF-8' "

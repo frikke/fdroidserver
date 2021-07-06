@@ -35,7 +35,7 @@ notes=FIXME,XXX,TODO
 [BASIC]
 
 # Good variable names which should always be accepted, separated by a comma
-good-names=i,j,k,ex,Run,_,e,f,fp
+good-names=i,j,k,ex,Run,f,fp
 
 
 [ELIF]
@@ -43,3 +43,5 @@ good-names=i,j,k,ex,Run,_,e,f,fp
 # Maximum number of nested blocks for function / method body
 max-nested-blocks=5
 
+[FORMAT]
+max-line-length=88
