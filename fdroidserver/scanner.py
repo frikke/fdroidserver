@@ -1334,6 +1334,9 @@ def main():
     elif probcount or options.verbose:
         print(_("%d problems found") % probcount)
 
+    if options.exit_code and probcount > 0:
+        sys.exit(ExitCode.NONFREE_CODE)
+
 
 if __name__ == "__main__":
     main()
