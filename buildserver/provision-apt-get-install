@@ -38,6 +38,9 @@ if echo $debian_mirror | grep '^https' 2>&1 > /dev/null; then
     apt-get install ca-certificates
 fi
 
+# ensure that only the configured sources are active
+rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.*
+
 cat << EOF > /etc/apt/sources.list.d/debian.sources
 Types: deb
 URIs: ${debian_mirror}
