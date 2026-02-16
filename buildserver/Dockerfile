@@ -32,9 +32,6 @@ RUN useradd --create-home -s /bin/bash vagrant && echo -n 'vagrant:vagrant' | ch
 # - vagrant needs openssh-client iproute2 ssh sudo
 # - ansible needs python3
 #
-# Debian Docker images will soon default to HTTPS for apt sources, so force it.
-# https://github.com/debuerreotype/docker-debian-artifacts/issues/15
-#
 # Ensure fdroidserver's dependencies are marked manual before purging
 # unneeded packages, otherwise, all its dependencies get purged.
 #
@@ -49,7 +46,6 @@ RUN useradd --create-home -s /bin/bash vagrant && echo -n 'vagrant:vagrant' | ch
 RUN printf "path-exclude=/usr/share/locale/*\npath-exclude=/usr/share/man/*\npath-exclude=/usr/share/doc/*\npath-include=/usr/share/doc/*/copyright\n" >/etc/dpkg/dpkg.cfg.d/01_nodoc \
 	&& mkdir -p /usr/share/man/man1 \
 	&& echo 'Acquire::https::Verify-Peer "false";' > /etc/apt/apt.conf.d/99nocacertificates \
-	&& find /etc/apt/sources.list* -type f -exec sed -i s,http:,https:, {} \; \
 	&& apt-get update \
 	&& apt-get install ca-certificates \
 	&& rm /etc/apt/apt.conf.d/99nocacertificates \
