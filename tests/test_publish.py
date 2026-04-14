@@ -16,6 +16,7 @@ import pathlib
 import shutil
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest import mock
 
@@ -24,6 +25,7 @@ from fdroidserver._yaml import yaml
 from fdroidserver.exception import FDroidException
 
 from .shared_test_code import VerboseFalseOptions, mkdtemp
+from .test_common import TmpCwd
 
 basedir = pathlib.Path(__file__).parent
 
@@ -415,3 +417,53 @@ class PublishTest(unittest.TestCase):
             with self.assertRaises(SystemExit) as e:
                 publish.main()
             self.assertEqual(e.exception.code, 1)
+
+
+class TestMain(unittest.TestCase):
+    def test_skip_v1_signed_only(self):
+        urzip_path = (pathlib.Path(__file__).parent / "urzip.apk").resolve()
+        keystore_path = (pathlib.Path(__file__).parent / "keystore.jks").resolve()
+        with tempfile.TemporaryDirectory() as tmpdir, TmpCwd(tmpdir):
+            unsigned_dir = pathlib.Path(tmpdir) / "unsigned"
+            unsigned_dir.mkdir()
+            (unsigned_dir / "urzip_1.apk").symlink_to(urzip_path)
+            unsigned_bin_dir = unsigned_dir / "binaries"
+            unsigned_bin_dir.mkdir()
+            (unsigned_bin_dir / "urzip_1.binary.apk").symlink_to(urzip_path)
+            pathlib.Path('keystore.jks').symlink_to(keystore_path)
+            common.get_config()['keystore'] = 'keystore.jks'
+            common.get_config()['repo_keyalias'] = 'sova'
+            common.get_config()[
+                'keystorepass'
+            ] = 'r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI='
+            common.get_config()[
+                'keypass'
+            ] = 'r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI='
+
+            meta_dir = pathlib.Path(tmpdir) / "metadata"
+            meta_dir.mkdir()
+            pathlib.Path(meta_dir / "urzip.yml").write_text(
+                textwrap.dedent(
+                    """\
+                    Binaries: https://example.com/downloads/urzip_%v.apk
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                sys, 'argv', ['fdroid publish', '--error-on-failed']
+            ):
+                with mock.patch("logging.error") as mock_error:
+                    with self.assertRaises(SystemExit) as e:
+                        publish.main()
+                    self.assertEqual(e.exception.code, 1)
+                    self.assertEqual(
+                        mock_error.mock_calls,
+                        [
+                            mock.call(
+                                "...reference binary only contains v1 signature - publish skipped: 'unsigned/binaries/urzip_1.binary.apk'"
+                            ),
+                            mock.call('1 APKs failed to be signed or verified!'),
+                        ],
+                    )
