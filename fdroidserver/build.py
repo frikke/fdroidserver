@@ -1011,6 +1011,15 @@ def parse_commandline():
     return options, parser
 
 
+def _download_and_check_reference_binary(url, dest_path):
+    logging.info("...retrieving " + url)
+    try:
+        net.download_file(url, local_filename=dest_path)
+    except requests.exceptions.HTTPError as e:
+        raise FDroidException(
+            'Downloading Binaries from %s failed.' % url) from e
+
+
 options = None
 config = None
 fdroidserverid = None
@@ -1208,14 +1217,9 @@ def main():
                                          .format(path=binaries_dir))
                         url = url.replace('%v', build.versionName)
                         url = url.replace('%c', str(build.versionCode))
-                        logging.info("...retrieving " + url)
                         of = re.sub(r'\.apk$', '.binary.apk', common.get_release_filename(app, build))
                         of = os.path.join(binaries_dir, of)
-                        try:
-                            net.download_file(url, local_filename=of)
-                        except requests.exceptions.HTTPError as e:
-                            raise FDroidException(
-                                'Downloading Binaries from %s failed.' % url) from e
+                        _download_and_check_reference_binary(url, of)
 
                         # Now we check whether the build can be verified to
                         # match the supplied binary or not. Should the

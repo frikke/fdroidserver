@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import requests
 import shutil
 import sys
 import tempfile
@@ -1180,3 +1181,26 @@ class BuildTest(unittest.TestCase):
         fdroidserver.build.options.keep_when_not_allowed = False
         fdroidserver.build.config = {'keep_when_not_allowed': False}
         self.assertFalse(fdroidserver.build.keep_when_not_allowed())
+
+
+class TestDownloadAndCheckReferenceBinary(unittest.TestCase):
+    def test_working_download(self):
+        with mock.patch("fdroidserver.net.download_file") as mock_dl:
+            with mock.patch("logging.info") as mock_log:
+                fdroidserver.build._download_and_check_reference_binary(
+                    "URL-value", "target-path"
+                )
+                mock_log.assert_called_once_with("...retrieving URL-value")
+            mock_dl.assert_called_once_with("URL-value", local_filename="target-path")
+
+    def test_failing_download(self):
+        err = requests.exceptions.HTTPError()
+        with mock.patch("fdroidserver.net.download_file", side_effect=err) as mock_dl:
+            with self.assertRaisesRegex(
+                fdroidserver.exception.FDroidException,
+                "Downloading Binaries from URL-value failed.",
+            ):
+                fdroidserver.build._download_and_check_reference_binary(
+                    "URL-value", "target-path"
+                )
+            mock_dl.assert_called_once_with("URL-value", local_filename="target-path")
