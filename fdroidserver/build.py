@@ -31,6 +31,7 @@ import tempfile
 import threading
 import time
 import traceback
+import zipfile
 from gettext import ngettext
 from pathlib import Path
 
@@ -1014,10 +1015,23 @@ def parse_commandline():
 def _download_and_check_reference_binary(url, dest_path):
     logging.info("...retrieving " + url)
     try:
-        net.download_file(url, local_filename=dest_path)
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            # download reference binary into a temporary location
+            net.download_file(url, local_filename=tmp.name)
+            # enforce policy on v1 only signed binaries
+            if common.apk_is_v1_signed_only(tmp.name):
+                Path(tmp.name).unlink()
+                raise FDroidException(
+                    "rejecting reference binary '{}' v2+ signature required".format(url)
+                )
+            # donwload and checks successful, put downloaded file in place
+            shutil.move(tmp.name, dest_path)
     except requests.exceptions.HTTPError as e:
+        raise FDroidException('Downloading Binaries from %s failed.' % url) from e
+    except zipfile.BadZipFile as e:
         raise FDroidException(
-            'Downloading Binaries from %s failed.' % url) from e
+            "androguard failed to parse reference binary {}".format(url)
+        ) from e
 
 
 options = None
