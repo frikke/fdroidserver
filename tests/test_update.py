@@ -1329,81 +1329,6 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
         package_added_cache.get(fake_apk)
         self.assertEqual(package_added_cache.versions[fake_apk], package_added_cache.now)
 
-    def test_get_apks_without_allowed_signatures(self):
-        """Test when no AllowedAPKSigningKeys is specified"""
-        os.chdir(self.testdir)
-        shutil.copytree(basedir / 'repo', 'repo')
-        config = dict()
-        fdroidserver.common.fill_config_defaults(config)
-        fdroidserver.common.config = config
-        fdroidserver.common.options = Options
-        fdroidserver.update.options = fdroidserver.common.options
-
-        app = fdroidserver.metadata.App()
-        package_added_cache = fdroidserver.update.PackageAddedCache()
-        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', package_added_cache)
-        apkfile = 'v1.v2.sig_1020.apk'
-        self.assertIn(
-            apkfile,
-            os.listdir('repo'),
-            f'{apkfile} was archived or otherwise removed from "repo"',
-        )
-        (skip, apk, cachechanged) = fdroidserver.update.process_apk(
-            {}, apkfile, 'repo', package_added_cache, False
-        )
-
-        r = fdroidserver.update.get_apks_without_allowed_signatures(app, apk)
-        self.assertIsNone(r)
-
-    def test_get_apks_without_allowed_signatures_allowed(self):
-        """Test when the APK matches the specified AllowedAPKSigningKeys"""
-        os.chdir(self.testdir)
-        shutil.copytree(basedir / 'repo', 'repo')
-        config = dict()
-        fdroidserver.common.fill_config_defaults(config)
-        fdroidserver.common.config = config
-        fdroidserver.common.options = Options
-        fdroidserver.update.options = fdroidserver.common.options
-
-        app = fdroidserver.metadata.App(
-            {
-                'AllowedAPKSigningKeys': '32a23624c201b949f085996ba5ed53d40f703aca4989476949cae891022e0ed6'
-            }
-        )
-        package_added_cache = fdroidserver.update.PackageAddedCache()
-        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', package_added_cache)
-        apkfile = 'v1.v2.sig_1020.apk'
-        (skip, apk, cachechanged) = fdroidserver.update.process_apk(
-            {}, apkfile, 'repo', package_added_cache, False
-        )
-
-        r = fdroidserver.update.get_apks_without_allowed_signatures(app, apk)
-        self.assertIsNone(r)
-
-    def test_get_apks_without_allowed_signatures_blocked(self):
-        """Test when the APK does not match any specified AllowedAPKSigningKeys"""
-        os.chdir(self.testdir)
-        shutil.copytree(basedir / 'repo', 'repo')
-        config = dict()
-        fdroidserver.common.fill_config_defaults(config)
-        fdroidserver.common.config = config
-        fdroidserver.common.options = Options
-        fdroidserver.update.options = fdroidserver.common.options
-
-        app = fdroidserver.metadata.App(
-            {
-                'AllowedAPKSigningKeys': 'fa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edead'
-            }
-        )
-        package_added_cache = fdroidserver.update.PackageAddedCache()
-        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', package_added_cache)
-        apkfile = 'v1.v2.sig_1020.apk'
-        (skip, apk, cachechanged) = fdroidserver.update.process_apk(
-            {}, apkfile, 'repo', package_added_cache, False
-        )
-
-        r = fdroidserver.update.get_apks_without_allowed_signatures(app, apk)
-        self.assertEqual(apkfile, r)
 
     def test_update_with_AllowedAPKSigningKeys(self):
         """Test that APKs without allowed signatures get deleted."""
@@ -2602,6 +2527,96 @@ class TestParseIpa(unittest.TestCase):
                 'name': 'OnionShare',
             },
         )
+
+
+class TestGetApksWithoutAllowedSignatures(unittest.TestCase):
+    def setUp(self):
+        os.chdir(basedir)
+        self._td = mkdtemp()
+        self.testdir = self._td.name
+
+        fdroidserver.common.config = None
+        fdroidserver.common.options = None
+
+    def tearDown(self):
+        os.chdir(basedir)
+        self._td.cleanup()
+
+    def test_get_apks_without_allowed_signatures(self):
+        """Test when no AllowedAPKSigningKeys is specified"""
+        os.chdir(self.testdir)
+        shutil.copytree(basedir / 'repo', 'repo')
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.common.options = Options
+        fdroidserver.update.options = fdroidserver.common.options
+
+        app = fdroidserver.metadata.App()
+        package_added_cache = fdroidserver.update.PackageAddedCache()
+        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', package_added_cache)
+        apkfile = 'v1.v2.sig_1020.apk'
+        self.assertIn(
+            apkfile,
+            os.listdir('repo'),
+            f'{apkfile} was archived or otherwise removed from "repo"',
+        )
+        (skip, apk, cachechanged) = fdroidserver.update.process_apk(
+            {}, apkfile, 'repo', package_added_cache, False
+        )
+
+        r = fdroidserver.update.get_apks_without_allowed_signatures(app, apk)
+        self.assertIsNone(r)
+
+    def test_get_apks_without_allowed_signatures_allowed(self):
+        """Test when the APK matches the specified AllowedAPKSigningKeys"""
+        os.chdir(self.testdir)
+        shutil.copytree(basedir / 'repo', 'repo')
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.common.options = Options
+        fdroidserver.update.options = fdroidserver.common.options
+
+        app = fdroidserver.metadata.App(
+            {
+                'AllowedAPKSigningKeys': '32a23624c201b949f085996ba5ed53d40f703aca4989476949cae891022e0ed6'
+            }
+        )
+        package_added_cache = fdroidserver.update.PackageAddedCache()
+        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', package_added_cache)
+        apkfile = 'v1.v2.sig_1020.apk'
+        (skip, apk, cachechanged) = fdroidserver.update.process_apk(
+            {}, apkfile, 'repo', package_added_cache, False
+        )
+
+        r = fdroidserver.update.get_apks_without_allowed_signatures(app, apk)
+        self.assertIsNone(r)
+
+    def test_get_apks_without_allowed_signatures_blocked(self):
+        """Test when the APK does not match any specified AllowedAPKSigningKeys"""
+        os.chdir(self.testdir)
+        shutil.copytree(basedir / 'repo', 'repo')
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.common.options = Options
+        fdroidserver.update.options = fdroidserver.common.options
+
+        app = fdroidserver.metadata.App(
+            {
+                'AllowedAPKSigningKeys': 'fa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edead'
+            }
+        )
+        package_added_cache = fdroidserver.update.PackageAddedCache()
+        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', package_added_cache)
+        apkfile = 'v1.v2.sig_1020.apk'
+        (skip, apk, cachechanged) = fdroidserver.update.process_apk(
+            {}, apkfile, 'repo', package_added_cache, False
+        )
+
+        r = fdroidserver.update.get_apks_without_allowed_signatures(app, apk)
+        self.assertEqual(apkfile, r)
 
 
 class TestUpdateVersionStringToInt(unittest.TestCase):
