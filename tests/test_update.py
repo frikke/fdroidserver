@@ -2453,42 +2453,50 @@ class TestUpdateWithAllowedApkSigningKeys(unittest.TestCase):
     def test_allowed_keys_correct(self):
         """Test that APKs without allowed signatures get deleted."""
         with mkdtemp() as tmpdir, TmpCwd(tmpdir):
-            os.mkdir('repo')
-            testapk = os.path.join('repo', 'com.politedroid_6.apk')
-            shutil.copy(basedir / testapk, testapk)
-            os.mkdir('metadata')
-            metadatafile = os.path.join('metadata', 'com.politedroid.yml')
+            test_apk = Path('repo') / 'com.politedroid_6.apk'
+            test_apk.parent.mkdir()
+            test_apk.symlink_to(basedir / 'repo' / 'com.politedroid_6.apk')
 
-            with open(metadatafile, 'w', encoding="utf-8") as fp:
-                fp.write(
-                    'AllowedAPKSigningKeys: 32a23624c201b949f085996ba5ed53d40f703aca4989476949cae891022e0ed6'
-                )
+            meta_file = Path('metadata') / 'com.politedroid.yml'
+            meta_file.parent.mkdir()
+            meta_file.write_text(
+                'AllowedAPKSigningKeys: '
+                '32a23624c201b949f085996ba5ed53d40f703aca4989476949cae891022e0ed6',
+                encoding='utf-8',
+            )
 
-            self.assertTrue(os.path.exists(testapk))
+            self.assertTrue(test_apk.exists())
 
             # Test for non-deletion
             with mock.patch('sys.argv', ['fdroid update', '--delete-unknown']):
                 fdroidserver.update.main()
-            self.assertTrue(os.path.exists(testapk), f"'{testapk}' not present! Should not have been deleted because it signed by a key in 'AllowedAPKSigningKeys'.")
+            self.assertTrue(
+                test_apk.exists(),
+                f"'{test_apk}' not present! Should not have been deleted because it signed by a key in 'AllowedAPKSigningKeys'."
+            )
 
     def test_incorrect_allowed_signing_key(self):
         """Test that APKs without allowed signatures get deleted."""
         with mkdtemp() as tmpdir, TmpCwd(tmpdir):
-            os.mkdir('repo')
-            testapk = os.path.join('repo', 'com.politedroid_6.apk')
-            shutil.copy(basedir / testapk, testapk)
-            os.mkdir('metadata')
-            metadatafile = os.path.join('metadata', 'com.politedroid.yml')
+            test_apk = Path('repo') / 'com.politedroid_6.apk'
+            test_apk.parent.mkdir()
+            test_apk.symlink_to(basedir / 'repo' / 'com.politedroid_6.apk')
 
-            with open(metadatafile, 'w', encoding="utf-8") as fp:
-                fp.write(
-                    'AllowedAPKSigningKeys: fa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edead'
-                )
+            meta_file = Path('metadata') / 'com.politedroid.yml'
+            meta_file.parent.mkdir()
+            meta_file.write_text(
+                'AllowedAPKSigningKeys: '
+                'fa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edead',
+                encoding='utf-8',
+            )
 
             # Test for deletion
             with mock.patch('sys.argv', ['fdroid update', '--delete-unknown']):
                 fdroidserver.update.main()
-            self.assertFalse(os.path.exists(testapk), f"'{testapk}' present! Should have been deleted because it's not signed by a key in 'AllowedAPKSigningKeys'")
+            self.assertFalse(
+                test_apk.exists(),
+                f"'{test_apk}' present! Should have been deleted because it's not signed by a key in 'AllowedAPKSigningKeys'"
+            )
 
 
 class TestParseIpa(unittest.TestCase):
