@@ -2443,11 +2443,21 @@ class TestUpdateWithAllowedApkSigningKeys(unittest.TestCase):
         fdroidserver.common.config = None
         fdroidserver.common.options = None
 
+        # Set up options
+        fdroidserver.common.options = Options
+        config = fdroidserver.common.read_config()
+        if 'apksigner' not in config:  # TODO remove me for buildserver-bullseye
+            self.skipTest('SKIPPING test_update_with_AllowedAPKSigningKeys, apksigner not installed!')
+        config['repo_keyalias'] = 'sova'
+        config['keystorepass'] = 'r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI='
+        config['keypass'] = 'r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI='
+        config['keystore'] = os.path.join(basedir, 'keystore.jks')
+
     def tearDown(self):
         os.chdir(basedir)
         self._td.cleanup()
 
-    def test_update_with_AllowedAPKSigningKeys(self):
+    def test_allowed_keys_correct(self):
         """Test that APKs without allowed signatures get deleted."""
         os.chdir(self.testdir)
         os.mkdir('repo')
@@ -2463,22 +2473,21 @@ class TestUpdateWithAllowedApkSigningKeys(unittest.TestCase):
                 '\n\nAllowedAPKSigningKeys: 32a23624c201b949f085996ba5ed53d40f703aca4989476949cae891022e0ed6\n'
             )
 
-        # Set up options
-        fdroidserver.common.options = Options
-        config = fdroidserver.common.read_config()
-        if 'apksigner' not in config:  # TODO remove me for buildserver-bullseye
-            self.skipTest('SKIPPING test_update_with_AllowedAPKSigningKeys, apksigner not installed!')
-        config['repo_keyalias'] = 'sova'
-        config['keystorepass'] = 'r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI='
-        config['keypass'] = 'r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI='
-        config['keystore'] = os.path.join(basedir, 'keystore.jks')
-
         self.assertTrue(os.path.exists(testapk))
 
         # Test for non-deletion
         with mock.patch('sys.argv', ['fdroid update', '--delete-unknown']):
             fdroidserver.update.main()
-        self.assertTrue(os.path.exists(testapk))
+        self.assertTrue(os.path.exists(testapk), f"'{testapk}' not present! Should not have been deleted because it signed by a key in 'AllowedAPKSigningKeys'.")
+
+    def test_incorrect_allowed_signing_key(self):
+        """Test that APKs without allowed signatures get deleted."""
+        os.chdir(self.testdir)
+        os.mkdir('repo')
+        testapk = os.path.join('repo', 'com.politedroid_6.apk')
+        shutil.copy(basedir / testapk, testapk)
+        os.mkdir('metadata')
+        metadatafile = os.path.join('metadata', 'com.politedroid.yml')
 
         # Copy and manipulate metadata file again
         shutil.copy(basedir / metadatafile, metadatafile)
@@ -2490,7 +2499,7 @@ class TestUpdateWithAllowedApkSigningKeys(unittest.TestCase):
         # Test for deletion
         with mock.patch('sys.argv', ['fdroid update', '--delete-unknown']):
             fdroidserver.update.main()
-        self.assertFalse(os.path.exists(testapk))
+        self.assertFalse(os.path.exists(testapk), f"'{testapk}' present! Should have been deleted because it's not signed by a key in 'AllowedAPKSigningKeys'")
 
 
 class TestParseIpa(unittest.TestCase):
