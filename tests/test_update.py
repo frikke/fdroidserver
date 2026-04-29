@@ -2459,11 +2459,9 @@ class TestUpdateWithAllowedApkSigningKeys(unittest.TestCase):
             os.mkdir('metadata')
             metadatafile = os.path.join('metadata', 'com.politedroid.yml')
 
-            # Copy and manipulate metadata file
-            shutil.copy(basedir / metadatafile, metadatafile)
-            with open(metadatafile, 'a') as fp:
+            with open(metadatafile, 'w', encoding="utf-8") as fp:
                 fp.write(
-                    '\n\nAllowedAPKSigningKeys: 32a23624c201b949f085996ba5ed53d40f703aca4989476949cae891022e0ed6\n'
+                    'AllowedAPKSigningKeys: 32a23624c201b949f085996ba5ed53d40f703aca4989476949cae891022e0ed6'
                 )
 
             self.assertTrue(os.path.exists(testapk))
@@ -2482,11 +2480,9 @@ class TestUpdateWithAllowedApkSigningKeys(unittest.TestCase):
             os.mkdir('metadata')
             metadatafile = os.path.join('metadata', 'com.politedroid.yml')
 
-            # Copy and manipulate metadata file again
-            shutil.copy(basedir / metadatafile, metadatafile)
-            with open(metadatafile, 'a') as fp:
+            with open(metadatafile, 'w', encoding="utf-8") as fp:
                 fp.write(
-                    '\n\nAllowedAPKSigningKeys: fa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edead\n'
+                    'AllowedAPKSigningKeys: fa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edeadfa4edead'
                 )
 
             # Test for deletion
