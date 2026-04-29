@@ -2453,15 +2453,15 @@ class TestUpdateWithAllowedApkSigningKeys(unittest.TestCase):
     def test_allowed_keys_correct(self):
         """Test that APKs without allowed signatures get deleted."""
         with mkdtemp() as tmpdir, TmpCwd(tmpdir):
-            test_apk = Path('repo') / 'com.politedroid_6.apk'
+            test_apk = Path('repo') / 'apk.embedded_1.apk'
             test_apk.parent.mkdir()
-            test_apk.symlink_to(basedir / 'repo' / 'com.politedroid_6.apk')
+            test_apk.symlink_to(basedir / 'apk.embedded_1.apk')
 
-            meta_file = Path('metadata') / 'com.politedroid.yml'
+            meta_file = Path('metadata') / 'apk.embedded.yml'
             meta_file.parent.mkdir()
             meta_file.write_text(
                 'AllowedAPKSigningKeys: '
-                '32a23624c201b949f085996ba5ed53d40f703aca4989476949cae891022e0ed6',
+                '764f0eaac0cdcde35023658eea865c4383ab580f9827c62fdd3daf9e654199ee',
                 encoding='utf-8',
             )
 
@@ -2478,11 +2478,11 @@ class TestUpdateWithAllowedApkSigningKeys(unittest.TestCase):
     def test_incorrect_allowed_signing_key(self):
         """Test that APKs without allowed signatures get deleted."""
         with mkdtemp() as tmpdir, TmpCwd(tmpdir):
-            test_apk = Path('repo') / 'com.politedroid_6.apk'
+            test_apk = Path('repo') / 'apk.embedded_1.apk'
             test_apk.parent.mkdir()
-            test_apk.symlink_to(basedir / 'repo' / 'com.politedroid_6.apk')
+            test_apk.symlink_to(basedir / 'apk.embedded_1.apk')
 
-            meta_file = Path('metadata') / 'com.politedroid.yml'
+            meta_file = Path('metadata') / 'apk.embedded.yml'
             meta_file.parent.mkdir()
             meta_file.write_text(
                 'AllowedAPKSigningKeys: '
