@@ -1184,7 +1184,7 @@ class TestDownloadAndCheckReferenceBinary(unittest.TestCase):
         with mock.patch("fdroidserver.net.download_file") as mock_dl:
             with mock.patch("logging.info") as mock_log:
                 with mock.patch(
-                    "fdroidserver.common.apk_is_v1_signed_only", return_value=False
+                    "fdroidserver.common.apkfile_is_v1_signed_only", return_value=False
                 ) as mock_v1:
                     with mock.patch("shutil.move") as mock_mv:
                         fdroidserver.build._download_and_check_reference_binary(
@@ -1231,7 +1231,7 @@ class TestDownloadAndCheckReferenceBinary(unittest.TestCase):
         with mock.patch("fdroidserver.net.download_file") as mock_dl:
             with mock.patch("logging.info") as mock_log:
                 with mock.patch(
-                    "fdroidserver.common.apk_is_v1_signed_only", return_value=True
+                    "fdroidserver.common.apkfile_is_v1_signed_only", return_value=True
                 ) as mock_v1:
                     with self.assertRaisesRegex(
                         fdroidserver.exception.FDroidException,

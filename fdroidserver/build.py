@@ -1019,7 +1019,7 @@ def _download_and_check_reference_binary(url, dest_path):
             # download reference binary into a temporary location
             net.download_file(url, local_filename=tmp.name)
             # enforce policy on v1 only signed binaries
-            if common.apk_is_v1_signed_only(tmp.name):
+            if common.apkfile_is_v1_signed_only(tmp.name):
                 Path(tmp.name).unlink()
                 raise FDroidException(
                     "rejecting reference binary '{}' v2+ signature required".format(url)

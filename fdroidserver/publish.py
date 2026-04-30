@@ -384,7 +384,7 @@ def main():
                     )
                 )
                 failed += 1
-            elif common.apk_is_v1_signed_only(srcapk):
+            elif common.apkfile_is_v1_signed_only(srcapk):
                 logging.error(
                     "...reference binary only contains v1 signature - publish skipped: '{refpath}'".format(
                         refpath=srcapk
