@@ -2639,6 +2639,31 @@ class TestGetApksWithoutAllowedSignatures(unittest.TestCase):
         r = fdroidserver.update.get_apks_without_allowed_signatures(app, apk)
         self.assertEqual(apkfile, r)
 
+    def test_get_apks_without_allowed_signatures_v1_only_check(self):
+        """Test when the APK does not match any specified AllowedAPKSigningKeys"""
+        os.chdir(self.testdir)
+        shutil.copytree(basedir / 'repo', 'repo')
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.common.options = Options
+        fdroidserver.update.options = fdroidserver.common.options
+
+        app = fdroidserver.metadata.App(
+            {
+                'AllowedAPKSigningKeys': '32a23624c201b949f085996ba5ed53d40f703aca4989476949cae891022e0ed6'
+            }
+        )
+        package_added_cache = fdroidserver.update.PackageAddedCache()
+        apks, cachechanged = fdroidserver.update.process_apks({}, 'repo', package_added_cache)
+        apkfile = 'com.politedroid_6.apk'
+        (skip, apk, cachechanged) = fdroidserver.update.process_apk(
+            {}, apkfile, 'repo', package_added_cache, False
+        )
+
+        r = fdroidserver.update.get_apks_without_allowed_signatures(app, apk)
+        self.assertEqual(apkfile, r)
+
 
 class TestUpdateVersionStringToInt(unittest.TestCase):
     def test_version_string_to_int(self):
