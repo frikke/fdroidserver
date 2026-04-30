@@ -10,6 +10,7 @@ icons:
   120: info.guardianproject.urzip.100.png
 icons_src:
   0: res/drawable/ic_launcher.png
+is_v1_signed_only: True
 manifest:
   signer:
     sha256:

@@ -999,6 +999,7 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
                 'sha256': 'e2e1dc1d550df2b5bc383860139207258645b5540abeccd305ed8b2cb6459d2c',
                 'size': 14102,
             },
+            'is_v1_signed_only': False,
             'manifest': {
                 'signer': {
                     'sha256': [
@@ -1843,6 +1844,7 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
                         120: 'res/drawable-ldpi-v4/icon_launcher.png',
                         160: 'res/drawable-mdpi-v4/icon_launcher.png',
                     },
+                    'is_v1_signed_only': True,
                     'manifest': {
                         'nativecode': [
                             'arm64-v8a',

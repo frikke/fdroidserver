@@ -1990,6 +1990,8 @@ def scan_apk_androguard(apk, apkfile):
     if icons_src:
         apk['icons_src'] = icons_src
 
+    apk['is_v1_signed_only'] = common.apk_is_v1_signed_only(apkobject)
+
     arch_re = re.compile("^lib/(.*)/.*$")
     arch = set([arch_re.match(file).group(1) for file in apkobject.get_files() if arch_re.match(file)])
     if len(arch) >= 1:
@@ -2738,9 +2740,11 @@ def get_apks_without_allowed_signatures(app, apk):
     """
     if not app or not apk:
         return
+
     allowed_signer_keys = app.get('AllowedAPKSigningKeys', [])
     if not allowed_signer_keys:
         return
+
     for sha256 in apk['manifest']['signer']['sha256']:
         if sha256 not in allowed_signer_keys:
             return apk['file']['name']

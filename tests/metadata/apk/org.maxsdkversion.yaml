@@ -10,6 +10,7 @@ icons:
   160: org.maxsdkversion.4.png
 icons_src:
   160: res/drawable-mdpi-v4/mirror.png
+is_v1_signed_only: False
 manifest:
   features:
     - name: android.hardware.camera.front
