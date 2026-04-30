@@ -42,11 +42,18 @@ class TmpCwd:
         self.new_cwd = new_cwd
 
     def __enter__(self):
-        self.orig_cwd = os.getcwd()
+        try:
+            self.orig_cwd = os.getcwd()
+        except FileNotFoundError:
+            # os.getcwd raises FileNotFoundError if CWD currently is a path
+            # that doesn't exists (happens quite a bit in fdroidserver because
+            # some tests change cwd to a temp dir but fail to reset it)
+            self.orig_cwd = None
         os.chdir(self.new_cwd)
 
     def __exit__(self, a, b, c):
-        os.chdir(self.orig_cwd)
+        if self.orig_cwd:
+            os.chdir(self.orig_cwd)
 
 
 class TmpPyPath:
