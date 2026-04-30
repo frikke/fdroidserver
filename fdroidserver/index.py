@@ -1059,6 +1059,7 @@ def make_v1(apps, packages, repodir, repodict, requestsdict, signer_fingerprints
                 'icons',
                 'icons_src',
                 'ipfsCIDv1',
+                'is_v1_signed_only',
                 'name',
                 'srcnameSha256',
             ):

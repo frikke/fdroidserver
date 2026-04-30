@@ -2725,6 +2725,10 @@ def get_apps_with_packages(apps, apks):
 def get_apks_without_allowed_signatures(app, apk):
     """Check the APK or package has been signed by one of the allowed signing certificates.
 
+    This function implements signing certificate allow list filtering APKs, as
+    well as filtering APKs with certificate allow listing, which aren't using
+    v2+ signing scheme.
+
     The fingerprint of the signing certificate is the standard X.509
     SHA-256 fingerprint as a hex string.  It can be fetched from an
     APK using:
@@ -2741,13 +2745,22 @@ def get_apks_without_allowed_signatures(app, apk):
     if not app or not apk:
         return
 
+    # Ignore all APKs/packages which do not use 'AllowedAPKSigningKeys'
+    # (this function only filters APKs which have 'AllowedAPKSigningKeys')
     allowed_signer_keys = app.get('AllowedAPKSigningKeys', [])
     if not allowed_signer_keys:
         return
 
+    # Check if the APK is signed by a key which is not pinned in
+    # 'AllowedAPKSigningKeys'.
     for sha256 in apk['manifest']['signer']['sha256']:
         if sha256 not in allowed_signer_keys:
             return apk['file']['name']
+
+    # check whether the apk is exclusivly signed with an old signing scheme
+    # fdroidserver only allows 'AllowedAPKSigningKeys' for APKs with a v2+ signature
+    if apk.get("is_v1_signed_only", False):
+        return apk['file']['name']
 
 
 def prepare_apps(apps, apks, repodir):
