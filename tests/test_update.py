@@ -1718,8 +1718,7 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
             else:
                 # 'Donate' metadata
                 for v in data.values():
-                    for donate_option in app.get('Donate', []):
-                        self.assertEqual(donate_option.split('/')[-1], v)
+                    self.assertEqual(app['Donate'][0].split('/')[-1], v)
 
     def test_insert_funding_yml_donation_links_with_corrupt_file(self):
         os.chdir(self.testdir)

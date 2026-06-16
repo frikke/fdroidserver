@@ -419,7 +419,11 @@ valuetypes = {
 
     FieldValidator("HTTP link",
                    r'^http[s]?://',
-                   ["WebSite", "SourceCode", "IssueTracker", "Translation", "Changelog", "Donate"]),
+                   ["WebSite", "SourceCode", "IssueTracker", "Translation", "Changelog"]),
+
+    FieldValidator("Donation link",
+                   r'^(?:https?://|taler://|bitcoin:|litecoin:)',
+                   ["Donate"]),
 
     FieldValidator("Email",
                    r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
