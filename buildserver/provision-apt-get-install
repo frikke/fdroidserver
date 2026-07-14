@@ -129,7 +129,7 @@ packages="
  python3-magic
  python3-packaging
  rsync
- sdkmanager/trixie-backports
+ sdkmanager
  sudo
  unzip
 "
