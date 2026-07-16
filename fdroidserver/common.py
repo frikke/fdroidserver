@@ -3807,14 +3807,14 @@ def apk_implant_signatures(apkpath, outpath, sigdir):
                           exclude=apksigcopier.exclude_meta)
 
 
-def apk_extract_signatures(apkpath, outdir):
+def apk_extract_signatures(apkpath, sigdir):
     """Extract a signature files from APK and puts them into target directory.
 
     Parameters
     ----------
     apkpath
         location of the apk
-    outdir
+    sigdir
         older where the extracted signature files will be stored
 
     References
@@ -3824,14 +3824,14 @@ def apk_extract_signatures(apkpath, outdir):
     * https://source.android.com/security/apksigning/v3
 
     """
-    apksigcopier.do_extract(apkpath, outdir, v1_only=None)
+    apksigcopier.do_extract(apkpath, sigdir, v1_only=None)
     # For v2/v3-only APKs (no v1 META-INF) the developer fingerprint can no
     # longer be read from a .RSA/.DSA/.EC file, so cache the first signer's
     # certificate (DER) via get_first_signer_certificate alongside the block.
     # See https://gitlab.com/fdroid/fdroidserver/-/issues/1065
-    has_v2_block = os.path.isfile(os.path.join(outdir, 'APKSigningBlock'))
+    has_v2_block = os.path.isfile(os.path.join(sigdir, 'APKSigningBlock'))
     has_v1_sig = any(
-        glob.glob(os.path.join(outdir, '*.' + ext)) for ext in ('RSA', 'DSA', 'EC')
+        glob.glob(os.path.join(sigdir, '*.' + ext)) for ext in ('RSA', 'DSA', 'EC')
     )
     if has_v2_block and not has_v1_sig:
         cert = get_first_signer_certificate(apkpath)
@@ -3839,7 +3839,7 @@ def apk_extract_signatures(apkpath, outdir):
             raise FDroidException(
                 _('No v2/v3 certificate found in {path}').format(path=apkpath)
             )
-        Path(os.path.join(outdir, 'signer-certificate.der')).write_bytes(cert)
+        Path(os.path.join(sigdir, 'signer-certificate.der')).write_bytes(cert)
 
 
 def get_min_sdk_version(apk):
