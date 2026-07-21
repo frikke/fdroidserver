@@ -26,7 +26,6 @@ class SignindexTest(unittest.TestCase):
     basedir = Path(__file__).resolve().parent
 
     def setUp(self):
-        signindex.config = None
         config = common.read_config()
         config['jarsigner'] = common.find_sdk_tools_cmd('jarsigner')
         config['verbose'] = True
@@ -34,7 +33,6 @@ class SignindexTest(unittest.TestCase):
         config['repo_keyalias'] = 'sova'
         config['keystorepass'] = 'r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI='
         config['keypass'] = 'r9aquRHYoI8+dYz6jKrLntQ5/NJNASFBacJh7Jv2BlI='
-        signindex.config = config
 
         self.tempdir = tempfile.TemporaryDirectory()
         os.chdir(self.tempdir.name)
@@ -43,6 +41,7 @@ class SignindexTest(unittest.TestCase):
 
     def tearDown(self):
         self.tempdir.cleanup()
+        common.config = None
 
     def test_sign_index(self):
         shutil.copy(str(self.basedir / 'repo/index-v1.json'), 'repo')

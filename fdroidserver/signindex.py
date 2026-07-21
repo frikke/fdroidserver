@@ -26,7 +26,6 @@ from argparse import ArgumentParser
 from . import _, common, metadata
 from .exception import FDroidException
 
-config = None
 start_timestamp = time.gmtime()
 
 
@@ -50,6 +49,7 @@ def sign_jar(jar, use_old_algs=False):
     This method requires a properly initialized config object.
 
     """
+    config = common.get_config()
     if use_old_algs:
         # This does use old hashing algorithms, i.e. SHA1, but that's not
         # broken yet for file verification.  This could be set to SHA256,
@@ -175,8 +175,6 @@ def status_update_json(signed):
 
 
 def main():
-    global config
-
     parser = ArgumentParser()
     common.setup_global_opts(parser)
     common.parse_args(parser)
