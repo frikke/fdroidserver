@@ -2946,6 +2946,17 @@ def get_androguard_APK(apkfile, skip_analysis=False):
     return APK(apkfile, skip_analysis=skip_analysis)
 
 
+def apkfile_is_v1_signed_only(apkfile):
+    """Determine whether given APK file path is exclusively signed with v1 singing scheme."""
+    apk = get_androguard_APK(apkfile)
+    return apk_is_v1_signed_only(apk)
+
+
+def apk_is_v1_signed_only(apk):
+    """Determine whether given androguard APK object is exclusively signed with v1 singing scheme."""
+    return apk.is_signed_v1() and not apk.is_signed_v2() and not apk.is_signed_v3()
+
+
 def ensure_final_value(packageName, arsc, value):
     """Ensure incoming value is always the value, not the resid.
 

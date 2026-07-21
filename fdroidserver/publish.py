@@ -384,6 +384,13 @@ def main():
                     )
                 )
                 failed += 1
+            elif common.apkfile_is_v1_signed_only(srcapk):
+                logging.error(
+                    "...reference binary only contains v1 signature - publish skipped: '{refpath}'".format(
+                        refpath=srcapk
+                    )
+                )
+                failed += 1
             else:
                 # Compare our unsigned one with the downloaded one...
                 compare_result = common.verify_apks(srcapk, apkfile, tmp_dir)

@@ -4158,3 +4158,25 @@ class BuildVarsTest(unittest.TestCase):
     def test_replace_build_vars_no_versionName(self):
         with self.assertRaises(fdroidserver.exception.MetaDataException):
             fdroidserver.common.replace_build_vars('$$VERSION$$', self.build),
+
+
+class TestApkfileIsV1SignedOnly(unittest.TestCase):
+    def test_v1_janus(self):
+        path = str(Path(__file__).absolute().parent / 'janus.apk')
+        self.assertTrue(fdroidserver.common.apkfile_is_v1_signed_only(path))
+
+    def test_v1_urzip(self):
+        path = str(Path(__file__).absolute().parent / 'urzip.apk')
+        self.assertTrue(fdroidserver.common.apkfile_is_v1_signed_only(path))
+
+    def test_v2(self):
+        path = str(Path(__file__).absolute().parent / 'v2.only.sig_2.apk')
+        self.assertFalse(fdroidserver.common.apkfile_is_v1_signed_only(path))
+
+    def test_v3(self):
+        path = str(Path(__file__).absolute().parent / 'issue-1128-min-sdk-30-poc.apk')
+        self.assertFalse(fdroidserver.common.apkfile_is_v1_signed_only(path))
+
+    def test_v1_v2_v3(self):
+        path = str(Path(__file__).absolute().parent / 'apk.embedded_1.apk')
+        self.assertFalse(fdroidserver.common.apkfile_is_v1_signed_only(path))

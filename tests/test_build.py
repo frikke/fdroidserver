@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import requests
 import shutil
 import sys
 import tempfile
@@ -727,9 +728,7 @@ class BuildTest(unittest.TestCase):
             mock.patch('fdroidserver.common.FDroidPopen', FakeProcess) as c,
             mock.patch('fdroidserver.build.FDroidPopen', FakeProcess) as d,
             mock.patch('fdroidserver.build.trybuild', lambda *args: True) as e,
-            mock.patch(
-                'fdroidserver.net.download_file', lambda *args, **kwargs: None
-            ) as f,
+            mock.patch("fdroidserver.build._download_and_check_reference_binary") as f,
         ):
             a, b, c, d, e, f  # silence linters' "unused" warnings
 
@@ -819,9 +818,7 @@ class BuildTest(unittest.TestCase):
             mock.patch('fdroidserver.common.FDroidPopen', FakeProcess) as c,
             mock.patch('fdroidserver.build.FDroidPopen', FakeProcess) as d,
             mock.patch('fdroidserver.build.trybuild', lambda *args: True) as e,
-            mock.patch(
-                'fdroidserver.net.download_file', lambda *args, **kwargs: None
-            ) as f,
+            mock.patch('fdroidserver.build._download_and_check_reference_binary') as f,
         ):
             a, b, c, d, e, f  # silence linters' "unused" warnings
 
@@ -1180,3 +1177,76 @@ class BuildTest(unittest.TestCase):
         fdroidserver.build.options.keep_when_not_allowed = False
         fdroidserver.build.config = {'keep_when_not_allowed': False}
         self.assertFalse(fdroidserver.build.keep_when_not_allowed())
+
+
+class TestDownloadAndCheckReferenceBinary(unittest.TestCase):
+    def test_working_download(self):
+        with mock.patch("fdroidserver.net.download_file") as mock_dl:
+            with mock.patch("logging.info") as mock_log:
+                with mock.patch(
+                    "fdroidserver.common.apkfile_is_v1_signed_only", return_value=False
+                ) as mock_v1:
+                    with mock.patch("shutil.move") as mock_mv:
+                        fdroidserver.build._download_and_check_reference_binary(
+                            "https://example.com/fake_ref.apk", "target-path"
+                        )
+                        mock_mv.assert_called_once_with(mock.ANY, 'target-path')
+                    # ANY is a temp file path
+                    mock_v1.assert_called_once_with(mock.ANY)
+                mock_log.assert_called_once_with(
+                    "...retrieving https://example.com/fake_ref.apk"
+                )
+            # ANY is a temp file path
+            mock_dl.assert_called_once_with(
+                "https://example.com/fake_ref.apk",
+                local_filename=mock.ANY,
+            )
+
+    def test_non_https_url(self):
+        with self.assertRaisesRegex(
+            requests.exceptions.InvalidSchema,
+            "No connection adapters were found for 'http://example.com/bad_ref.apk'",
+        ):
+            fdroidserver.build._download_and_check_reference_binary(
+                "http://example.com/bad_ref.apk", "target-path"
+            )
+
+    def test_failing_download(self):
+        err = requests.exceptions.HTTPError()
+        with mock.patch("fdroidserver.net.download_file", side_effect=err) as mock_dl:
+            with self.assertRaisesRegex(
+                fdroidserver.exception.FDroidException,
+                r"Downloading Binaries from https://example.com/fake_ref.apk failed.",
+            ):
+                fdroidserver.build._download_and_check_reference_binary(
+                    "https://example.com/fake_ref.apk", "target-path"
+                )
+            # ANY is a temp file path
+            mock_dl.assert_called_once_with(
+                "https://example.com/fake_ref.apk",
+                local_filename=mock.ANY,
+            )
+
+    def test_rejected_apk_signature(self):
+        with mock.patch("fdroidserver.net.download_file") as mock_dl:
+            with mock.patch("logging.info") as mock_log:
+                with mock.patch(
+                    "fdroidserver.common.apkfile_is_v1_signed_only", return_value=True
+                ) as mock_v1:
+                    with self.assertRaisesRegex(
+                        fdroidserver.exception.FDroidException,
+                        r"rejecting reference binary 'https://example.com/fake_ref.apk' v2\+ signature required",
+                    ):
+                        fdroidserver.build._download_and_check_reference_binary(
+                            "https://example.com/fake_ref.apk", "target-path"
+                        )
+                    # ANY is a temp file path
+                    mock_v1.assert_called_once_with(mock.ANY)
+                mock_log.assert_called_once_with(
+                    "...retrieving https://example.com/fake_ref.apk"
+                )
+            # ANY is a temp file path
+            mock_dl.assert_called_once_with(
+                "https://example.com/fake_ref.apk",
+                local_filename=mock.ANY,
+            )
