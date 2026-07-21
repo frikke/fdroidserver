@@ -258,6 +258,10 @@ class PublishTest(unittest.TestCase):
                 self.assertEqual(publish.config['keytool'], data['keytool'])
 
     @unittest.skipIf(sys.byteorder == 'big', 'androguard is not ported to big-endian')
+    @unittest.skipIf(
+        'ID=fedora' in pathlib.Path('/etc/os-release').read_text(),
+        'https://gitlab.com/fdroid/fdroidserver/-/work_items/1354',
+    )
     def test_sign_then_implant_signature(self):
         os.chdir(self.testdir)
 
