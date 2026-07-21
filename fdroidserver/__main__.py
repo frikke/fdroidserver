@@ -18,6 +18,24 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+"""Provide core functionality for the `fdroid` command to run subcommands.
+
+The `fdroid` command is the entry point for all the subcommands that
+actually provide the functionality. This is similar to how `git` works.
+Each subcommand runs standalone. There is an internal API for shared
+code.  Any state is explicitly stored in files on the filesystem,
+e.g. _config.yml_ or an package's _metadata/com.example.yml_.
+
+There are a number of subcommands that are intended only for use in
+automation, e.g. in scripted environments.  These are not listed in the
+help. They are not intended for interactive use.  Although they
+sometimes might be useful interactively, they might also sometimes be
+dangerous to run interactively because they rely on the presense of a
+VM/container, modify the local environment, or even run things as root.
+
+"""
+
+
 import importlib.metadata
 import logging
 import os
@@ -57,13 +75,6 @@ COMMANDS = OrderedDict([
 
 # The list of subcommands that are not advertised as public api,
 # intended for the use-case of breaking down builds into atomic steps.
-#
-# For the build automation, there will be lots of subcommands that are
-# meant to run in scripted environments.  They are not intended for
-# interactive use.  Although they sometimes might be useful
-# interactively, they might also sometimes be dangerous to run
-# interactively because they rely on the presense of a VM/container,
-# modify the local environment, or even run things as root.
 COMMANDS_INTERNAL = [
     "build_local_run",
     "destroy",
@@ -139,6 +150,19 @@ def preparse_plugin(module_name, module_dir):
 
 
 def find_plugins():
+    """Find any available plugins via Python's module loader.
+
+    The plugin loader is built using Python's module loading logic,
+    which affects any command line program written in Python.  We
+    believe the plugin loading does not change the security profile of
+    the `fdroid` command line tool.
+
+    When a plugin is called intentionally, like `fdroid hello_world`,
+    there's nothing I can do to prevent that plugin from accessing any
+    code... So we have to assume users interested in staying safe, won't
+    download random scripts from the internet and execute them.
+
+    """
     found_plugins = [{'name': x[1], 'dir': x[0].path} for x in pkgutil.iter_modules() if x[1].startswith('fdroid_')]
     plugin_infos = {}
     for plugin_def in found_plugins:
