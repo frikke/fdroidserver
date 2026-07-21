@@ -175,3 +175,59 @@ class SignindexTest(unittest.TestCase):
             ['jarsigner', '-verify', '-verbose', f], stdout=subprocess.PIPE
         )
         self.assertFalse(b'SHA1withRSA' in cp.stdout)
+
+    @patch('fdroidserver.index.make_website', lambda a, b, c: None)
+    def test_signindex_main_with_unsupported_key(self):
+        """Test when the repo includes a manually generated EC signing key.
+
+        Using an EC signing key is not a supported configuration because
+        using it will lead to compatibility issues with index v0 and v1.
+
+        """
+
+        # silence warnings
+        icon = Path('repo/icons/icon.png')
+        icon.parent.mkdir()
+        icon.write_text('placeholder')
+
+        metadata = Path('metadata')
+        metadata.mkdir()
+        with (metadata / 'info.guardianproject.urzip.yml').open('w') as fp:
+            fp.write('# placeholder')
+        shutil.copy(str(self.basedir / 'urzip.apk'), 'repo')
+
+        common.config['keystore'] = 'keystore.jks'
+        # custom version of common.genkeystore() to generate an EC key
+        cmd = [
+            common.config['keytool'],
+            '-genkeypair',
+            '-alias',
+            common.config['repo_keyalias'],
+            '-keyalg',
+            'EC',
+            '-groupname',
+            'secp256r1',
+            '-sigalg',
+            'SHA256withECDSA',
+            '-keystore',
+            common.config['keystore'],
+            '-storepass',
+            common.config['keystorepass'],
+            '-keypass',
+            common.config['keypass'],
+            '-validity',
+            '3650',
+            '-dname',
+            'CN=example.com',
+        ]
+        p = common.FDroidPopen(cmd, envs={'LC_ALL': 'C.UTF-8'})
+        self.assertEqual(0, p.returncode, f'{cmd} should succeed, but got {p.output}')
+
+        with patch('sys.argv', ['fdroid update', '--nosign']):
+            update.main()
+        with (
+            patch('sys.argv', ['fdroid signindex']),
+            self.assertRaises(exception.FDroidException) as e,
+        ):
+            signindex.main()
+        self.assertIn('Failed to sign', e.exception.value)
