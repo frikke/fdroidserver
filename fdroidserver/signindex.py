@@ -26,7 +26,6 @@ from argparse import ArgumentParser
 from . import _, common, metadata
 from .exception import FDroidException
 
-config = None
 start_timestamp = time.gmtime()
 
 
@@ -50,6 +49,7 @@ def sign_jar(jar, use_old_algs=False):
     This method requires a properly initialized config object.
 
     """
+    config = common.get_config()
     if use_old_algs:
         # This does use old hashing algorithms, i.e. SHA1, but that's not
         # broken yet for file verification.  This could be set to SHA256,
@@ -106,15 +106,18 @@ def sign_jar(jar, use_old_algs=False):
         'FDROID_KEY_STORE_PASS': config['keystorepass'],
         'FDROID_KEY_PASS': config.get('keypass', ""),
     }
+
     p = common.FDroidPopen(args, envs=env_vars)
+
     if not use_old_algs and p.returncode != 0:
         # workaround for apksigner v30 on f-droid.org publish server
         v4 = args.index("--v4-signing-enabled")
         del args[v4 + 1]
         del args[v4]
         p = common.FDroidPopen(args, envs=env_vars)
-        if p.returncode != 0:
-            raise FDroidException("Failed to sign %s: %s" % (jar, p.output))
+
+    if p.returncode != 0:
+        raise FDroidException("Failed to sign %s: %s" % (jar, p.output))
 
 
 def sign_index(repodir, json_name):
@@ -172,8 +175,6 @@ def status_update_json(signed):
 
 
 def main():
-    global config
-
     parser = ArgumentParser()
     common.setup_global_opts(parser)
     common.parse_args(parser)
