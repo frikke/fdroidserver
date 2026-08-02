@@ -1782,6 +1782,12 @@ def check_regexes(app):
                 for line in v.splitlines():
                     if m.match(line):
                         yield "%s at line '%s': %s" % (f, line, r)
+            elif t == metadata.TYPE_LIST:
+                for item in v or []:
+                    if item is None:
+                        continue
+                    if m.match(item):
+                        yield "%s '%s': %s" % (f, item, r)
             else:
                 if v is None:
                     continue

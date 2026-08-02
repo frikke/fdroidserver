@@ -126,7 +126,7 @@ class App(dict):
         self.IssueTracker = ''
         self.Translation = ''
         self.Changelog = ''
-        self.Donate = None
+        self.Donate = []
         self.Liberapay = None
         self.OpenCollective = None
         self.Bitcoin = None
@@ -188,6 +188,7 @@ fieldtypes = {
     'MaintainerNotes': TYPE_MULTILINE,
     'Categories': TYPE_LIST,
     'AntiFeatures': TYPE_STRINGMAP,
+    'Donate': TYPE_LIST,
     'RequiresRoot': TYPE_BOOL,
     'AllowedAPKSigningKeys': TYPE_LIST,
     'Builds': TYPE_BUILD,
@@ -1269,6 +1270,11 @@ def _app_to_yaml(app):
                     v = _format_stringmap(app['id'], field, value)
                     if v:
                         cm[field] = v
+                elif field == 'Donate':
+                    if len(value) == 1:
+                        cm[field] = value[0]
+                    else:
+                        cm[field] = value
                 elif field == 'AllowedAPKSigningKeys':
                     value = [str(i).lower() for i in value]
                     if len(value) == 1:

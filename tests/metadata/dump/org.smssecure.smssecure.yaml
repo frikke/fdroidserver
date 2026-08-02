@@ -384,7 +384,7 @@ Description: 'SMSSecure is an SMS/MMS application that allows you to protect you
   * Open Source. SMSSecure is Free and Open Source, enabling anyone to verify its
   security by auditing the code.'
 Disabled: null
-Donate: null
+Donate: []
 IssueTracker: https://github.com/SMSSecure/SMSSecure/issues
 Liberapay: null
 License: GPL-3.0-only

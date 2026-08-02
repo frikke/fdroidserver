@@ -1052,44 +1052,44 @@ def insert_funding_yml_donation_links(apps):
                     if k == 'custom':
                         s = sanitize_funding_yml_entry(v)
                         if s:
-                            app['Donate'] = s
+                            app['Donate'] = [s]
                             break
                     elif k in ('community_bridge', 'lfx_crowdfunding'):
                         s = sanitize_funding_yml_name(v)
                         if s:
-                            app['Donate'] = (
+                            app['Donate'] = [
                                 f'https://crowdfunding.lfx.linuxfoundation.org/projects/{s}'
-                            )
+                            ]
                             break
                     elif k == 'github':
                         s = sanitize_funding_yml_name(v)
                         if s:
-                            app['Donate'] = 'https://github.com/sponsors/' + s
+                            app['Donate'] = ['https://github.com/sponsors/' + s]
                             break
                     elif k == 'issuehunt':
                         s = sanitize_funding_yml_name(v)
                         if s:
-                            app['Donate'] = 'https://issuehunt.io/r/' + s
+                            app['Donate'] = ['https://issuehunt.io/r/' + s]
                             break
                     elif k == 'ko_fi':
                         s = sanitize_funding_yml_name(v)
                         if s:
-                            app['Donate'] = 'https://ko-fi.com/' + s
+                            app['Donate'] = ['https://ko-fi.com/' + s]
                             break
                     elif k == 'patreon':
                         s = sanitize_funding_yml_name(v)
                         if s:
-                            app['Donate'] = 'https://patreon.com/' + s
+                            app['Donate'] = ['https://patreon.com/' + s]
                             break
                     elif k == 'buy_me_a_coffee':
                         s = sanitize_funding_yml_name(v)
                         if s:
-                            app['Donate'] = 'https://www.buymeacoffee.com/' + s
+                            app['Donate'] = ['https://www.buymeacoffee.com/' + s]
                             break
                     elif k == 'polar':
                         s = sanitize_funding_yml_name(v)
                         if s:
-                            app['Donate'] = 'https://polar.sh/' + s
+                            app['Donate'] = ['https://polar.sh/' + s]
                             break
 
 

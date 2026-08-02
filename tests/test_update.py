@@ -1615,7 +1615,7 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
                         'CurrentVersion': '',
                         'CurrentVersionCode': None,
                         'Disabled': '',
-                        'Donate': '',
+                        'Donate': None,
                         'IssueTracker': '',
                         'License': '',
                         'Litecoin': '',
@@ -1665,7 +1665,7 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
         fdroidserver.update.insert_funding_yml_donation_links(apps)
         for field in DONATION_FIELDS:
             self.assertIsNotNone(app.get(field), field)
-        self.assertEqual('LINK1', app.get('Donate'))
+        self.assertEqual(['LINK1'], app.get('Donate'))
         self.assertEqual('USERNAME', app.get('Liberapay'))
         self.assertEqual('USERNAME', app.get('OpenCollective'))
 
@@ -1686,8 +1686,9 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
         apps = {app.id: app}
         os.mkdir(os.path.join('build', app.id))
         fdroidserver.update.insert_funding_yml_donation_links(apps)
-        for field in DONATION_FIELDS:
-            self.assertIsNone(app.get(field))
+        self.assertEqual(app.get("Donate"), [])
+        self.assertIsNone(app.get("Liberapay"))
+        self.assertIsNone(app.get("OpenCollective"))
 
         content = textwrap.dedent(
             """
@@ -1715,8 +1716,10 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
             elif 'open_collective' in data:
                 self.assertEqual(data['open_collective'], app.get('OpenCollective'))
             else:
+                # 'Donate' metadata
                 for v in data.values():
-                    self.assertEqual(app.get('Donate', '').split('/')[-1], v)
+                    for donate_option in app.get('Donate', []):
+                        self.assertEqual(donate_option.split('/')[-1], v)
 
     def test_insert_funding_yml_donation_links_with_corrupt_file(self):
         os.chdir(self.testdir)
@@ -1736,8 +1739,9 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
                 )
             )
         fdroidserver.update.insert_funding_yml_donation_links(apps)
-        for field in DONATION_FIELDS:
-            self.assertIsNone(app.get(field))
+        self.assertEqual(app.get("Donate"), [])
+        self.assertIsNone(app.get("Liberapay"))
+        self.assertIsNone(app.get("OpenCollective"))
 
     def test_sanitize_funding_yml(self):
         with open(basedir / 'funding-usernames.yaml') as fp:

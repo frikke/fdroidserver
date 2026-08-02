@@ -1114,7 +1114,8 @@ Description: 'An ad blocker that uses the hosts file. The hosts file
 
   read-only.'
 Disabled: null
-Donate: http://sufficientlysecure.org/index.php/adaway
+Donate:
+- http://sufficientlysecure.org/index.php/adaway
 IssueTracker: https://github.com/dschuermann/ad-away/issues
 Liberapay: null
 License: GPL-3.0-only
