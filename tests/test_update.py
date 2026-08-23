@@ -653,6 +653,52 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
         self.assertEqual(app['localized']['en-US']['name'], 'Goguma')
         self.assertEqual(app['localized']['en-US']['summary'], 'An IRC client for mobile devices')
 
+    def _triple_t_app(self, packageName):
+        """Write minimal metadata and return the Triple-T play dir."""
+        os.chdir(self.testdir)
+        Path('metadata').mkdir(exist_ok=True)
+        Path('metadata', packageName + '.yml').write_text(
+            'CurrentVersionCode: 1\n'
+            'Builds:\n  - versionCode: 1\n    gradle:\n      - yes\n'
+        )
+        play = Path('build', packageName, 'src', 'main', 'play')
+        play.mkdir(parents=True)
+        return play
+
+    def _copy_triple_t(self, packageName):
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.common.config = config
+        fdroidserver.update.config = config
+        apps = fdroidserver.metadata.read_metadata()
+        fdroidserver.update.copy_triple_t_store_metadata(apps)
+        return apps[packageName].get('localized', {}).get('en-US', {})
+
+    @unittest.skipUnless(hasattr(os, 'symlink'), 'requires symlink support')
+    def test_insert_triple_t_symlink_within_checkout(self):
+        """A listings dir symlinked inside the checkout is still read."""
+        packageName = 'com.example.app'
+        play = self._triple_t_app(packageName)
+        target = Path('build', packageName, 'store-metadata', 'listings', 'en-US')
+        target.mkdir(parents=True)
+        (target / 'full-description.txt').write_text('good description')
+        os.symlink(os.path.relpath(target.parent, play), play / 'listings')
+        self.assertEqual(self._copy_triple_t(packageName).get('description'),
+                         'good description')
+
+    @unittest.skipUnless(hasattr(os, 'symlink'), 'requires symlink support')
+    def test_insert_triple_t_symlink_outside_checkout(self):
+        """A listing symlinked outside the checkout must not be published."""
+        packageName = 'com.example.app'
+        play = self._triple_t_app(packageName)
+        en_US = play / 'listings' / 'en-US'
+        en_US.mkdir(parents=True)
+        secret = Path('secret.txt')
+        secret.write_text('SECRET')
+        os.symlink(os.path.abspath(secret), en_US / 'full-description.txt')
+        self.assertNotIn('SECRET',
+                         self._copy_triple_t(packageName).get('description', ''))
+
     def testBadGetsig(self):
         """getsig() should still be able to fetch the fingerprint of bad signatures"""
         # config needed to use jarsigner and keytool

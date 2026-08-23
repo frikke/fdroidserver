@@ -1093,6 +1093,22 @@ def insert_funding_yml_donation_links(apps):
                             break
 
 
+def _filter_entries_within_checkout(root, names, checkout):
+    """Drop os.walk names whose symlink target escapes the app source checkout."""
+    checkout = os.path.realpath(checkout)
+    kept = []
+    for name in names:
+        target = os.path.realpath(os.path.join(root, name))
+        if target == checkout or target.startswith(checkout + os.sep):
+            kept.append(name)
+        else:
+            logging.warning(
+                _('Ignoring "{path}": symlink points outside the app source')
+                .format(path=os.path.join(root, name))
+            )
+    return kept
+
+
 def copy_triple_t_store_metadata(apps):
     """Include store metadata from the app's source repo.
 
@@ -1162,9 +1178,14 @@ def copy_triple_t_store_metadata(apps):
             # Flutter-style android subdir
             gradle_subdirs.update(glob.glob(os.path.join('build', packageName, 'android', 'app', 'src', '*', 'play')))
 
+        checkout = os.path.join('build', packageName)
         for d in sorted(gradle_subdirs):
             logging.debug('Triple-T Gradle Play Publisher: ' + d)
-            for root, dirs, files in os.walk(d):
+            # follow symlinks, but only within the checkout so they can't
+            # leak files from the build host into the published index
+            for root, dirs, files in os.walk(d, followlinks=True):
+                dirs[:] = _filter_entries_within_checkout(root, dirs, checkout)
+                files = _filter_entries_within_checkout(root, files, checkout)
                 segments = root.split('/')
                 if segments[-2] == 'listings' or segments[-2] == 'release-notes':
                     locale = segments[-1]
@@ -1262,9 +1283,14 @@ def insert_localized_app_metadata(apps):
     for srcd in sorted(sourcedirs):
         if not os.path.isdir(srcd):
             continue
-        for root, dirs, files in os.walk(srcd):
+        # follow symlinks, but only within the checkout so they can't
+        # leak files from the build host into the published index
+        for root, dirs, files in os.walk(srcd, followlinks=True):
             segments = root.split('/')
             packageName = segments[1]
+            checkout = os.path.join(segments[0], packageName)
+            dirs[:] = _filter_entries_within_checkout(root, dirs, checkout)
+            files = _filter_entries_within_checkout(root, files, checkout)
             if packageName not in apps:
                 logging.debug(
                     packageName + ' does not have app metadata, skipping l18n scan.'
