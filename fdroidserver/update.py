@@ -1292,7 +1292,6 @@ def insert_localized_app_metadata(apps):
         if not os.path.isdir(srcd):
             continue
         topdir, packageName = srcd.split('/')[:2]
-        assert topdir in ('build', 'metadata')
         checkout = os.path.join(topdir, packageName)
         for root, dirs, files in safe_walk(srcd, followLinksTo=checkout):
             segments = root.split('/')
