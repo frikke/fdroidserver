@@ -1093,6 +1093,34 @@ def insert_funding_yml_donation_links(apps):
                             break
 
 
+def safe_walk(top, followLinksTo):
+    """Run os.walk, only following symlinks that stay within followLinksTo.
+
+    Entries whose symlink target escapes the followLinksTo directory
+    are dropped with a warning, so symlinks in an app's source repo
+    cannot leak files from the build host into the published index.
+    """
+    followLinksTo = os.path.realpath(followLinksTo)
+
+    def _filter(root, names):
+        kept = []
+        for name in names:
+            target = os.path.realpath(os.path.join(root, name))
+            if target == followLinksTo or target.startswith(followLinksTo + os.sep):
+                kept.append(name)
+            else:
+                logging.warning(
+                    _('Ignoring "{path}": symlink points outside the app source')
+                    .format(path=os.path.join(root, name))
+                )
+        return kept
+
+    for root, dirs, files in os.walk(top, followlinks=True):
+        dirs[:] = _filter(root, dirs)
+        files[:] = _filter(root, files)
+        yield root, dirs, files
+
+
 def copy_triple_t_store_metadata(apps):
     """Include store metadata from the app's source repo.
 
@@ -1162,9 +1190,10 @@ def copy_triple_t_store_metadata(apps):
             # Flutter-style android subdir
             gradle_subdirs.update(glob.glob(os.path.join('build', packageName, 'android', 'app', 'src', '*', 'play')))
 
+        checkout = os.path.join('build', packageName)
         for d in sorted(gradle_subdirs):
             logging.debug('Triple-T Gradle Play Publisher: ' + d)
-            for root, dirs, files in os.walk(d):
+            for root, dirs, files in safe_walk(d, followLinksTo=checkout):
                 segments = root.split('/')
                 if segments[-2] == 'listings' or segments[-2] == 'release-notes':
                     locale = segments[-1]
@@ -1262,7 +1291,9 @@ def insert_localized_app_metadata(apps):
     for srcd in sorted(sourcedirs):
         if not os.path.isdir(srcd):
             continue
-        for root, dirs, files in os.walk(srcd):
+        topdir, packageName = srcd.split('/')[:2]
+        checkout = os.path.join(topdir, packageName)
+        for root, dirs, files in safe_walk(srcd, followLinksTo=checkout):
             segments = root.split('/')
             packageName = segments[1]
             if packageName not in apps:
