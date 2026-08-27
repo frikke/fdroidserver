@@ -61,6 +61,7 @@ metadata_v0:
     GIT_DEPTH: 1000
     RELEASE_COMMIT_ID: d172d991803b27ad5213d11b5a737e5cb9e5fc3a  # after switching to `git rev-parse`
   script:
+    - apt update -yyq && apt install -yyq yq
     - git fetch https://gitlab.com/fdroid/fdroidserver.git $RELEASE_COMMIT_ID
     - cd tests
     - export GITCOMMIT=$(git rev-parse HEAD)
@@ -80,6 +81,12 @@ metadata_v0:
           -e '/FlattrID:/d'
           -e '/RequiresRoot:/d'
           metadata/dump_*/*.yaml
+    # remove leading zeros (because we can't deal with that reliably)
+    - 'sed -i ''s/: 0*\([1-9][0-9]*\)/: \1/g'' metadata/dump_*/*.yaml'
+    # if .Donate is an array set .Donate to the first element in the array otherwise leave it unchanged
+    # (running this in batches significantly speeds the gitlab.ci run)
+    # TODO: remove this when tests need to migrate
+    - find metadata/dump_*/ -name '*.yaml' -print0 | xargs -0 -P 4 -n 50 -- yq -y --in-place '.Donate |= if type == "array" then .[0] else . end'
     - diff -uw metadata/dump_*
 
 .apt-template: &apt-template

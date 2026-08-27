@@ -2605,7 +2605,8 @@ Description: 'Video and audio player that supports a wide range of formats,
 
   '
 Disabled: null
-Donate: http://www.videolan.org/contribute.html#money
+Donate:
+- http://www.videolan.org/contribute.html#money
 IssueTracker: http://www.videolan.org/support/index.html#bugs
 Liberapay: null
 License: GPL-3.0-only

@@ -607,7 +607,7 @@ def package_metadata(app, repodir):
         del meta["license"]
 
     if app["Donate"]:
-        meta["donate"] = [app["Donate"]]
+        meta["donate"] = app["Donate"]
 
     # TODO handle different resolutions
     if app.get("icon"):
@@ -991,6 +991,9 @@ def make_v1(apps, packages, repodir, repodict, requestsdict, signer_fingerprints
                 v = str(v)
             elif k == 'CurrentVersion':  # TODO make SuggestedVersionName the canonical name
                 k = 'suggestedVersionName'
+            elif k == "Donate":
+                k = "donate"
+                v = _first(v)
             else:
                 k = k[:1].lower() + k[1:]
             d[k] = v
@@ -1327,7 +1330,7 @@ def make_v0(apps, apks, repodir, repodict, requestsdict, signer_fingerprints):
         addElementNonEmpty('changelog', app.Changelog, doc, apel)
         addElementNonEmpty('author', app.AuthorName, doc, apel)
         addElementNonEmpty('email', app.AuthorEmail, doc, apel)
-        addElementNonEmpty('donate', app.Donate, doc, apel)
+        addElementNonEmpty('donate', _first(app.Donate), doc, apel)
         addElementNonEmpty('bitcoin', app.Bitcoin, doc, apel)
         addElementNonEmpty('litecoin', app.Litecoin, doc, apel)
         addElementNonEmpty('openCollective', app.OpenCollective, doc, apel)
@@ -2116,3 +2119,10 @@ def make_altstore(apps, apks, config, repodir, pretty=False):
 
         with open(Path(repodir) / 'altstore-index.json', "w", encoding="utf-8") as f:
             json.dump(idx, f, indent=indent)
+
+
+def _first(items, default_value=None):
+    try:
+        return items[0]
+    except (IndexError, TypeError):
+        return default_value

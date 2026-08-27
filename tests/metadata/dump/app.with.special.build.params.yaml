@@ -346,7 +346,7 @@ Description: 'To configure, go to "Settings => Accounts & Sync => Add Account". 
 
   Appbrain SDK was removed before building.'
 Disabled: null
-Donate: null
+Donate: []
 IssueTracker: https://github.com/loadrunner/Facebook-Contact-Sync/issues
 Liberapay: null
 License: GPL-3.0-only
