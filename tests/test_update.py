@@ -279,6 +279,46 @@ class UpdateTest(SetUpTearDownMixin, unittest.TestCase):
         fdroidserver.update.insert_localized_app_metadata(apps)
         self.assertEqual(second_value, apps[app.id]['localized']['en-US']['name'])
 
+    def test_fastlane_with_subdir_images_and_changelogs(self):
+        """Test if the dirs below a subdir's <locale> dir are found."""
+        os.chdir(self.testdir)
+        config = dict()
+        fdroidserver.common.fill_config_defaults(config)
+        fdroidserver.update.config = config
+
+        app = fdroidserver.metadata.App()
+        app.id = 'com.example.app'
+        build_dir = f'build/{app.id}'
+        subdir = 'subproject'
+        apps = {app.id: app}
+        build = fdroidserver.metadata.Build()
+        build.versionCode = 42
+        build.gradle = ['yes']
+        build.subdir = subdir
+        app['Builds'] = [build]
+        app['CurrentVersionCode'] = 42
+
+        locale_dir = Path(f'{build_dir}/{subdir}/fastlane/metadata/android/en-US')
+        (locale_dir / 'changelogs').mkdir(parents=True)
+        (locale_dir / 'title.txt').write_text('title')
+        (locale_dir / 'changelogs/42.txt').write_text('whats new')
+        screenshots_dir = locale_dir / 'images' / 'phoneScreenshots'
+        screenshots_dir.mkdir(parents=True)
+        source_png = (
+            basedir / 'metadata/info.guardianproject.urzip/en-US/images/icon.png'
+        )
+        shutil.copy(source_png, locale_dir / 'images')
+        shutil.copy(source_png, screenshots_dir / 'screenshot.png')
+
+        fdroidserver.update.insert_localized_app_metadata(apps)
+
+        self.assertEqual('title', apps[app.id]['localized']['en-US']['name'])
+        self.assertEqual('whats new', build['whatsNew']['en-US'])
+        self.assertIn('en-US', apps[app.id]['iconv2'])
+        repo_dir = Path(f'repo/{app.id}/en-US')
+        self.assertTrue((repo_dir / 'icon.png').is_file())
+        self.assertTrue((repo_dir / 'phoneScreenshots' / 'screenshot.png').is_file())
+
     def test_fastlane_with_schildichat(self):
         """Test if fastlane is found in this tangle of dirs and symlinks.
 

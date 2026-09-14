@@ -1305,13 +1305,16 @@ def insert_localized_app_metadata(apps):
             destdir = os.path.join('repo', packageName, locale)
 
             builds = apps.get(packageName, {}).get('Builds', [])
+            # find the fastlane dir from <subdir>/fastlane/metadata/android/<locale>/**
+            fastlane_index = -1
+            for i in range(len(segments) - 3, 2, -1):
+                if segments[i : i + 3] == ["fastlane", "metadata", "android"]:
+                    fastlane_index = i
+                    break
             found_in_subdir = (
-                builds
-                and len(segments) > 6
-                and segments[-4] == "fastlane"
-                and segments[-3] == "metadata"
-                and segments[-2] == "android"
-                and '/'.join(segments[2:-4]) == builds[-1].get('subdir')
+                bool(builds)
+                and fastlane_index > 2
+                and '/'.join(segments[2:fastlane_index]) == builds[-1].get('subdir')
             )
 
             # flavors specified in build receipt
